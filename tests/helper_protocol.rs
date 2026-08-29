@@ -65,6 +65,39 @@ fn run_helper_with_delay_before_eof(
     child.wait_with_output().expect("failed to wait for helper")
 }
 
+fn run_helper_with_input_and_delay_before_eof(
+    stdin_text: &str,
+    delay: Duration,
+    input_mode: Option<&str>,
+    output_mode: Option<&str>,
+    args: &[&str],
+) -> Output {
+    let mut command = Command::new(helper_bin());
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command.args(args);
+    if let Some(mode) = input_mode {
+        command.env("OMATUNE_TEST_INPUT_MODE", mode);
+    }
+    if let Some(mode) = output_mode {
+        command.env("OMATUNE_TEST_OUTPUT_MODE", mode);
+    }
+
+    let mut child = command.spawn().expect("failed to spawn helper");
+    let mut stdin = child.stdin.take().expect("missing helper stdin");
+    if !stdin_text.is_empty() {
+        stdin
+            .write_all(stdin_text.as_bytes())
+            .expect("failed to write helper stdin");
+    }
+    thread::sleep(delay);
+    drop(stdin);
+
+    child.wait_with_output().expect("failed to wait for helper")
+}
+
 fn stdout_lines(output: &Output) -> Vec<String> {
     String::from_utf8(output.stdout.clone())
         .expect("stdout was not utf-8")
@@ -187,8 +220,9 @@ fn simulated_pitch_is_emitted_after_ready() {
 
 #[test]
 fn startup_reference_a_argument_calibrates_initial_pitch_and_tone() {
-    let output = run_helper_with_input(
+    let output = run_helper_with_input_and_delay_before_eof(
         "{\"type\":\"play_tone\",\"note\":\"A4\"}\n",
+        Duration::from_millis(30),
         Some("pitch:A4"),
         Some("ok"),
         &["--reference-a-hz", "442.0"],
@@ -198,8 +232,12 @@ fn startup_reference_a_argument_calibrates_initial_pitch_and_tone() {
     assert!(output.status.success());
     assert_eq!(lines[0], r#"{"type":"ready"}"#);
     assert_eq!(lines.len(), 3);
-    assert!(lines[1..].contains(&r#"{"type":"pitch","note":"A4","frequency_hz":442.0,"cents":0.0,"confidence":1.0}"#.to_owned()));
-    assert!(lines[1..].contains(&r#"{"type":"tone_started","note":"A4","frequency_hz":442.0}"#.to_owned()));
+    assert!(lines[1..].contains(
+        &r#"{"type":"pitch","note":"A4","frequency_hz":442.0,"cents":0.0,"confidence":1.0}"#
+            .to_owned()
+    ));
+    assert!(lines[1..]
+        .contains(&r#"{"type":"tone_started","note":"A4","frequency_hz":442.0}"#.to_owned()));
 }
 
 #[test]

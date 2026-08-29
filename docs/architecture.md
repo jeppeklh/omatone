@@ -112,10 +112,13 @@ state. It only needs the externally relevant ones defined in
 -   Open microphone input during helper startup, but open reference output
     lazily on the first `play_tone` request.
 -   Use a YIN-style monophonic detector over 48 kHz mono input with a
-    4096-sample analysis window and 2048-sample hop, yielding roughly 23
+    4800-sample analysis window and 2048-sample hop, yielding roughly 23
     pitch opportunities per second.
 -   Search for detected fundamentals in an initial practical range of
-    approximately 50 Hz to 1200 Hz.
+    approximately 30 Hz to 1200 Hz.
+-   Apply short-term Rust-side stability rules that use signal level for
+    silence gating and detector confidence for note switching so noisy
+    hops and octave glitches do not immediately replace a good lock.
 -   The Phase 5 UI is a compact bar widget with an anchored popup detail
     view rather than a full summoned panel.
 -   Opening the popup starts the helper when the tuner is currently off;

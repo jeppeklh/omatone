@@ -250,8 +250,10 @@ fn input_worker_loop(
         DEFAULT_MIN_FREQUENCY_HZ,
         DEFAULT_MAX_FREQUENCY_HZ,
     );
-    let mut analysis_buffer = Vec::with_capacity(DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2);
+    let mut analysis_buffer = vec![0.0_f32; DEFAULT_ANALYSIS_WINDOW_SAMPLES];
     let mut byte_buffer = vec![0_u8; INPUT_CHUNK_SAMPLES * std::mem::size_of::<f32>()];
+    let mut chunk_samples = [0.0_f32; INPUT_CHUNK_SAMPLES];
+    let mut filled_samples = 0_usize;
     let mut pending_samples = 0_usize;
     let mut last_had_pitch = None;
 
@@ -265,46 +267,100 @@ fn input_worker_loop(
             break;
         }
 
-        analysis_buffer.extend(
-            byte_buffer
-                .chunks_exact(std::mem::size_of::<f32>())
-                .map(|chunk| {
-                    let bytes: [u8; std::mem::size_of::<f32>()] = chunk.try_into().unwrap();
-                    f32::from_ne_bytes(bytes)
-                }),
-        );
+        for (sample, chunk) in chunk_samples
+            .iter_mut()
+            .zip(byte_buffer.chunks_exact(std::mem::size_of::<f32>()))
+        {
+            let bytes: [u8; std::mem::size_of::<f32>()] = chunk.try_into().unwrap();
+            *sample = f32::from_ne_bytes(bytes);
+        }
 
-        if analysis_buffer.len() > DEFAULT_ANALYSIS_WINDOW_SAMPLES {
-            let excess = analysis_buffer.len() - DEFAULT_ANALYSIS_WINDOW_SAMPLES;
-            analysis_buffer.drain(0..excess);
+        let had_full_window = filled_samples == DEFAULT_ANALYSIS_WINDOW_SAMPLES;
+        append_analysis_samples(&mut analysis_buffer, &mut filled_samples, &chunk_samples);
+
+        if filled_samples < DEFAULT_ANALYSIS_WINDOW_SAMPLES {
+            continue;
+        }
+
+        if !had_full_window {
+            pending_samples = 0;
+            emit_detector_update(
+                &mut detector,
+                &analysis_buffer,
+                &shared_config,
+                &protocol_writer,
+                &mut last_had_pitch,
+            );
+            continue;
         }
 
         pending_samples += INPUT_CHUNK_SAMPLES;
         while pending_samples >= DEFAULT_ANALYSIS_HOP_SAMPLES {
             pending_samples -= DEFAULT_ANALYSIS_HOP_SAMPLES;
-            let reference_a_hz = shared_config.reference_a_hz();
-
-            let Some(estimate) = detector.detect_pitch(&analysis_buffer, reference_a_hz) else {
-                if last_had_pitch != Some(false) {
-                    if let Err(error) = protocol_writer.write_message(&UiMessage::NoSignal) {
-                        eprintln!("omatune-helper: failed to emit no-signal message: {error}");
-                    }
-                    last_had_pitch = Some(false);
-                }
-                continue;
-            };
-
-            if let Err(error) = protocol_writer.write_message(&UiMessage::Pitch {
-                note: estimate.note,
-                frequency_hz: estimate.frequency_hz,
-                cents: estimate.cents,
-                confidence: Some(estimate.confidence),
-            }) {
-                eprintln!("omatune-helper: failed to emit pitch message: {error}");
-            }
-            last_had_pitch = Some(true);
+            emit_detector_update(
+                &mut detector,
+                &analysis_buffer,
+                &shared_config,
+                &protocol_writer,
+                &mut last_had_pitch,
+            );
         }
     }
+}
+
+fn append_analysis_samples(window: &mut [f32], filled_samples: &mut usize, samples: &[f32]) {
+    debug_assert!(samples.len() <= window.len());
+    let window_len = window.len();
+
+    if *filled_samples < window_len {
+        let samples_to_fill = (window_len - *filled_samples).min(samples.len());
+        window[*filled_samples..(*filled_samples + samples_to_fill)]
+            .copy_from_slice(&samples[..samples_to_fill]);
+        *filled_samples += samples_to_fill;
+
+        if samples_to_fill == samples.len() {
+            return;
+        }
+
+        let remaining_samples = &samples[samples_to_fill..];
+        window.copy_within(remaining_samples.len().., 0);
+        window[window_len - remaining_samples.len()..].copy_from_slice(remaining_samples);
+        *filled_samples = window_len;
+        return;
+    }
+
+    window.copy_within(samples.len().., 0);
+    window[window_len - samples.len()..].copy_from_slice(samples);
+}
+
+fn emit_detector_update(
+    detector: &mut PitchDetector,
+    analysis_buffer: &[f32],
+    shared_config: &SharedConfig,
+    protocol_writer: &ProtocolWriter,
+    last_had_pitch: &mut Option<bool>,
+) {
+    let reference_a_hz = shared_config.reference_a_hz();
+
+    let Some(estimate) = detector.detect_pitch(analysis_buffer, reference_a_hz) else {
+        if *last_had_pitch != Some(false) {
+            if let Err(error) = protocol_writer.write_message(&UiMessage::NoSignal) {
+                eprintln!("omatune-helper: failed to emit no-signal message: {error}");
+            }
+            *last_had_pitch = Some(false);
+        }
+        return;
+    };
+
+    if let Err(error) = protocol_writer.write_message(&UiMessage::Pitch {
+        note: estimate.note,
+        frequency_hz: estimate.frequency_hz,
+        cents: estimate.cents,
+        confidence: Some(estimate.confidence),
+    }) {
+        eprintln!("omatune-helper: failed to emit pitch message: {error}");
+    }
+    *last_had_pitch = Some(true);
 }
 
 fn emit_runtime_error(protocol_writer: &ProtocolWriter, code: ErrorCode, message: String) {

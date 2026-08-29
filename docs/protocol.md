@@ -66,6 +66,10 @@ The UI must not assume `confidence` is always present.
 The current helper emits `confidence` on `pitch` messages when a usable
 estimate is available.
 
+The current helper applies short-term Rust-side stabilization before
+emitting `pitch`, so a note change that looks like a transient or an
+octave flip may require one additional confirming analysis hop.
+
 ### No Signal
 
 Emitted when input is silent, too weak, or no reliable pitch is
@@ -81,6 +85,10 @@ unnecessarily.
 
 The current helper suppresses consecutive duplicate
 `no_signal` messages until a usable `pitch` estimate is emitted.
+
+When the input is still above the silence floor but one analysis hop is
+briefly unstable, the helper may retain the prior pitch for that single
+hop instead of flickering straight to `no_signal`.
 
 ### Tone Started
 
@@ -241,11 +249,11 @@ Pitch updates should be frequent enough for a responsive tuner. A
 practical starting target is approximately 20--50 updates per second
 when a stable signal is present.
 
-The current Phase 4 helper analyzes 48 kHz mono input with a 4096-sample
+The current Phase 4 helper analyzes 48 kHz mono input with a 4800-sample
 window and a 2048-sample hop, which yields approximately 23 analysis
 opportunities per second before any later suppression.
 
-The current detection search range is approximately 50 Hz to 1200 Hz.
+The current detection search range is approximately 30 Hz to 1200 Hz.
 
 The protocol does not require every analysis frame to produce a message.
 The helper may suppress redundant or low-confidence estimates.
