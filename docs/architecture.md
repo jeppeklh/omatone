@@ -23,8 +23,9 @@ Owns:
 -   presentation and layout;
 -   tuner activation/deactivation;
 -   user interaction for note selection and guitar shortcuts;
- -   persisted calibration, spelling, and tuning-preset preferences;
- -   helper process lifecycle from the UI side;
+-   persisted calibration, spelling, and tuning-preset preferences;
+-   persisted popup-layout and display-accessibility preferences;
+-   helper process lifecycle from the UI side;
 -   visual smoothing that does not change pitch correctness;
 -   displaying pitch, no-signal, and error states.
 

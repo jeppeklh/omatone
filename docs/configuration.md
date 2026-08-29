@@ -28,7 +28,10 @@ For a bar widget instance, the entry shape is:
   "referenceAHz": 440.0,
   "noteSpelling": "sharps",
   "selectedPresetId": "guitar.standard",
-  "selectedReferenceNote": "A4"
+  "selectedReferenceNote": "A4",
+  "popupLayoutMode": "compact",
+  "highContrastMode": false,
+  "reducedMotionMode": false
 }
 ```
 
@@ -43,6 +46,9 @@ settings file.
 -   `noteSpelling`: `"sharps"` or `"flats"`.
 -   `selectedPresetId`: built-in tuning preset identifier.
 -   `selectedReferenceNote`: last selected chromatic reference note.
+-   `popupLayoutMode`: `"compact"` or `"expanded"`.
+-   `highContrastMode`: boolean display-preference flag.
+-   `reducedMotionMode`: boolean display-preference flag.
 
 Unknown keys are preserved when Omatune rewrites its settings entry.
 
@@ -55,6 +61,9 @@ When no persisted configuration exists, Omatune uses:
 -   `noteSpelling = "sharps"`
 -   `selectedPresetId = "guitar.standard"`
 -   `selectedReferenceNote = "A4"`
+-   `popupLayoutMode = "compact"`
+-   `highContrastMode = false`
+-   `reducedMotionMode = false`
 
 The helper does not persist live runtime state such as whether the tuner
 is currently on or whether a tone is actively playing.
@@ -74,6 +83,13 @@ plugin build.
 `selectedReferenceNote` must parse as a supported chromatic note in the
 range `C0` through `B8` after canonicalization.
 
+`popupLayoutMode` must be one of:
+
+-   `compact`
+-   `expanded`
+
+`highContrastMode` and `reducedMotionMode` must be boolean values.
+
 If a persisted value is invalid, Omatune falls back to the documented
 default for that field.
 
@@ -86,8 +102,9 @@ The persisted `referenceAHz` value is applied in two places:
 -   helper runtime, via the additive `set_reference_a` protocol command,
     so live calibration changes also retune an active reference tone.
 
-Preset selection and note-spelling preference remain UI-owned state.
-They do not fork the underlying chromatic pitch model.
+Preset selection, note-spelling preference, popup layout, and display
+accessibility preferences remain UI-owned state. They do not fork the
+underlying chromatic pitch model.
 
 ## Migration Rules
 

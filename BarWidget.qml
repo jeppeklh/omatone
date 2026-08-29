@@ -28,6 +28,9 @@ BarWidget {
   property string noteSpelling: "sharps"
   property string selectedPresetId: "guitar.standard"
   property int selectedReferenceMidiNumber: 69
+  property string popupLayoutMode: "compact"
+  property bool highContrastMode: false
+  property bool reducedMotionMode: false
   property var pendingCommandLines: []
   property string lastProtocolType: ""
   property string lastProtocolLine: ""
@@ -77,6 +80,9 @@ BarWidget {
   readonly property bool toneActive: activeToneNote !== ""
   readonly property bool inTune: pitchActive && Math.abs(detectedCents) <= 5
   readonly property bool hasAlert: helperState === "error" || runtimeErrorMessage !== ""
+  readonly property bool popupExpanded: popupLayoutMode === "expanded"
+  readonly property bool shouldAnimateUi: !reducedMotionMode
+  readonly property bool standardGuitarPresetSelected: selectedPresetId === "guitar.standard"
   readonly property int selectedReferencePitchClassIndex: ((selectedReferenceMidiNumber % 12) + 12) % 12
   readonly property int selectedReferenceOctave: Math.floor(selectedReferenceMidiNumber / 12) - 1
   readonly property var selectedPreset: presetById(selectedPresetId)
@@ -86,6 +92,22 @@ BarWidget {
   readonly property string selectedReferenceNoteLabel: formatMidiNote(selectedReferenceMidiNumber, noteSpelling)
   readonly property string detectedNoteLabel: displayNoteLabel(detectedNote)
   readonly property string activeToneNoteLabel: displayNoteLabel(activeToneNote)
+  readonly property string pitchGuidanceText: {
+    if (!pitchActive) return ""
+    if (inTune) return "In tune"
+    return detectedCents < 0 ? "Tune up" : "Tune down"
+  }
+  readonly property string stateBadgeText: {
+    if (helperState === "error" || runtimeErrorMessage !== "") return "ERROR"
+    if (helperState === "inactive") return "OFF"
+    if (helperState === "starting") return "STARTING"
+    if (signalState === "no_signal") return "NO SIGNAL"
+    if (pitchActive) return inTune ? "IN TUNE" : (detectedCents < 0 ? "TUNE UP" : "TUNE DOWN")
+    if (toneActive) return "REFERENCE"
+    return "LISTENING"
+  }
+  readonly property string quickTuneHeadingText: standardGuitarPresetSelected ? "Standard guitar" : "Quick tune"
+  readonly property string keyboardShortcutSummary: "Keys: 1-6 notes | P play | X stop | T power | R restart | Esc close"
   readonly property bool opened: popupLoader.item ? popupLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: popupLoader.item ? popupLoader.item.popoutSwitchClosing === true : false
   readonly property string helperScriptPath: localPath("scripts/run-helper.sh")
@@ -98,7 +120,7 @@ BarWidget {
   readonly property string readoutTitleText: {
     if (pitchActive) return detectedNoteLabel
     if (toneActive) return activeToneNoteLabel
-    if (helperState === "error") return "ERR"
+    if (helperState === "error" || runtimeErrorMessage !== "") return "ERR"
     if (helperState === "starting") return "..."
     if (helperState === "inactive") return "OFF"
     return "--"
@@ -118,7 +140,8 @@ BarWidget {
     if (helperState === "inactive") return "Open the tuner or turn it on to begin capture."
     if (helperState === "starting") return "Starting the audio helper..."
     if (signalState === "no_signal") return "No signal. Play a steady note into the microphone."
-    if (pitchActive) return "Confidence: " + Math.round(detectedConfidence * 100) + "%"
+    if (pitchActive) return pitchGuidanceText + " | Confidence: " + Math.round(detectedConfidence * 100) + "%"
+    if (toneActive) return "Reference tone is active."
     return "Listening for pitch..."
   }
   readonly property string detailText: {
@@ -130,13 +153,13 @@ BarWidget {
     return "Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
   }
   readonly property string buttonText: {
-    if (helperState === "error") return "tun!"
-    if (helperState === "inactive") return "tun"
-    if (helperState === "starting") return "tun?"
-    if (pitchActive) return vertical ? detectedNoteLabel : (detectedNoteLabel + " " + formatCompactCents(detectedCents))
+    if (helperState === "error" || runtimeErrorMessage !== "") return "ERR"
+    if (helperState === "inactive") return "OFF"
+    if (helperState === "starting") return "..."
+    if (pitchActive) return vertical ? (detectedNoteLabel + (inTune ? "=" : "")) : (detectedNoteLabel + (inTune ? " =" : (" " + formatCompactCents(detectedCents))))
     if (toneActive) return activeToneNoteLabel
-    if (runtimeErrorMessage !== "") return "tun!"
-    return "listen"
+    if (signalState === "no_signal") return "SIG"
+    return "ON"
   }
   readonly property string tooltipText: {
     var lines = ["Omatune"]
@@ -157,6 +180,7 @@ BarWidget {
     if (runtimeErrorMessage !== "") lines.push("runtime error: " + runtimeErrorMessage)
     if (lastStderrLine !== "") lines.push("stderr: " + lastStderrLine)
     if (!helperProc.running && lastExitCode !== 0) lines.push("last exit code: " + lastExitCode)
+    lines.push("keys: 1-6 quick notes | p play | x stop | t power | r restart | esc close")
 
     lines.push("left click: open tuner")
     lines.push("right click: turn tuner on or off")
@@ -229,6 +253,19 @@ BarWidget {
 
   function normalizeNoteSpelling(value) {
     return String(value || "") === "flats" ? "flats" : "sharps"
+  }
+
+  function normalizePopupLayoutMode(value) {
+    return String(value || "") === "expanded" ? "expanded" : "compact"
+  }
+
+  function normalizeBooleanSetting(value, fallback) {
+    if (value === true || value === false) return value
+
+    var text = String(value)
+    if (text === "true") return true
+    if (text === "false") return false
+    return !!fallback
   }
 
   function noteBasePitchClass(letter) {
@@ -326,6 +363,9 @@ BarWidget {
     entry.noteSpelling = normalizeNoteSpelling(noteSpelling)
     entry.selectedPresetId = selectedPresetId
     entry.selectedReferenceNote = selectedReferenceCommandNoteLabel
+    entry.popupLayoutMode = normalizePopupLayoutMode(popupLayoutMode)
+    entry.highContrastMode = !!highContrastMode
+    entry.reducedMotionMode = !!reducedMotionMode
     return entry
   }
 
@@ -345,6 +385,9 @@ BarWidget {
     referenceAHz = normalizeReferenceAHz(root.setting("referenceAHz", 440.0))
     noteSpelling = normalizeNoteSpelling(root.setting("noteSpelling", "sharps"))
     selectedPresetId = presetById(root.setting("selectedPresetId", "guitar.standard")).id
+    popupLayoutMode = normalizePopupLayoutMode(root.setting("popupLayoutMode", "compact"))
+    highContrastMode = normalizeBooleanSetting(root.setting("highContrastMode", false), false)
+    reducedMotionMode = normalizeBooleanSetting(root.setting("reducedMotionMode", false), false)
 
     var persistedReferenceNote = String(root.setting("selectedReferenceNote", "A4") || "A4")
     var selectedMidiNumber = parseNoteMidiNumber(persistedReferenceNote)
@@ -382,6 +425,42 @@ BarWidget {
 
     noteSpelling = next
     persistWidgetSettings()
+  }
+
+  function setPopupLayoutMode(value) {
+    var next = normalizePopupLayoutMode(value)
+    if (next === popupLayoutMode) return
+
+    popupLayoutMode = next
+    persistWidgetSettings()
+  }
+
+  function togglePopupLayoutMode() {
+    setPopupLayoutMode(popupExpanded ? "compact" : "expanded")
+  }
+
+  function setHighContrastMode(value) {
+    var next = !!value
+    if (next === highContrastMode) return
+
+    highContrastMode = next
+    persistWidgetSettings()
+  }
+
+  function toggleHighContrastMode() {
+    setHighContrastMode(!highContrastMode)
+  }
+
+  function setReducedMotionMode(value) {
+    var next = !!value
+    if (next === reducedMotionMode) return
+
+    reducedMotionMode = next
+    persistWidgetSettings()
+  }
+
+  function toggleReducedMotionMode() {
+    setReducedMotionMode(!reducedMotionMode)
   }
 
   function setSelectedReferenceMidiNumber(midiNumber) {
@@ -576,6 +655,20 @@ BarWidget {
   function playReferenceNoteString(noteText) {
     if (!applySelectedReferenceFromNote(noteText)) return
     playSelectedTone()
+  }
+
+  function presetNoteAt(index) {
+    var numeric = Math.round(finiteNumber(index, -1))
+    if (numeric < 0 || numeric >= selectedPresetNotes.length) return ""
+    return String(selectedPresetNotes[numeric] || "")
+  }
+
+  function playPresetNoteAt(index) {
+    var noteText = presetNoteAt(index)
+    if (noteText === "") return false
+
+    playReferenceNoteString(noteText)
+    return true
   }
 
   function stopTone() {
