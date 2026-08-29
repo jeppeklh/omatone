@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "jeppeklh.omatune",
+  "name": "Omatune",
+  "version": "0.1.0",
+  "author": "jeppeklh",
+  "description": "Real-time chromatic tuner and reference-tone helper for the Omarchy bar",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omatune",
+    "description": "Start one persistent tuner helper from the Omarchy bar",
+    "category": "Music",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
