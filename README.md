@@ -31,6 +31,8 @@ note and hear its exact reference pitch for tuning by ear.
     expansion phases on the path to a stable 1.0
 -   `docs/v0.1-verification.md`: automated checks, deterministic helper
     failure simulations, and the manual release checklist
+-   `docs/v1.0-verification.md`: Phase 4 hardening checks, bounded
+    recovery validation, and install/update/remove smoke tests
 -   `docs/roadmap.md`: product roadmap beyond the initial release
 
 ## Current Scope
@@ -48,6 +50,8 @@ note and hear its exact reference pitch for tuning by ear.
 -   Built-in guitar, bass, ukulele, and violin-family tuning presets
 -   Sensible behavior for silence, weak input, invalid pitch estimates,
     and audio errors
+-   Bounded automatic recovery after unexpected helper exit and
+    input-side audio failures
 -   QML bar widget with a small native Rust helper
 
 Not included:
@@ -56,6 +60,48 @@ Not included:
 -   Large saved preset libraries
 -   Recording or audio storage
 -   Elaborate visual effects
+
+## Install, Update, Remove
+
+Install into Omarchy's plugin directory:
+
+1.  Copy or sync this repository to
+    `~/.config/omarchy/plugins/jeppeklh.omatune/`.
+2.  Run `bash scripts/build-helper-release.sh` from the plugin root to
+    stage `bin/omatune-helper`.
+3.  Run `omarchy plugin validate ~/.config/omarchy/plugins/jeppeklh.omatune`.
+4.  Add or reload the widget in the bar and open the popup once to verify
+    helper startup.
+
+Update the installed plugin the same way: refresh the repository
+contents, rerun `bash scripts/build-helper-release.sh`, and rerun
+`omarchy plugin validate ...` before relying on the new build.
+
+Remove the plugin by deleting
+`~/.config/omarchy/plugins/jeppeklh.omatune/` and removing the widget
+from the bar configuration if it is still present.
+
+## Helper CLI
+
+Normal helper mode is the NDJSON protocol process documented in
+`docs/protocol.md`.
+
+Supported flags:
+
+-   `--reference-a-hz <hz>`: startup A4 calibration within
+    `400.0..=480.0` Hz
+-   `-h`, `--help`: print usage and exit without starting audio
+-   `-V`, `--version`: print the helper version and exit without starting
+    audio
+
+`scripts/run-helper.sh` resolves the helper in this order:
+
+1.  `OMATUNE_HELPER_BIN` when it is explicitly set to an executable path
+2.  `bin/omatune-helper`
+3.  `target/debug/omatune-helper`
+4.  `target/release/omatune-helper`
+5.  `cargo run --quiet --bin omatune-helper -- ...` as a development
+    fallback
 
 ## Standard Guitar Reference Tones
 
@@ -129,9 +175,9 @@ For a note `n` semitones away from A4:
 
     frequency = A4 * 2^(n / 12)
 
-The implementation should accept the A4 reference as a parameter
-internally even though v0.1 may expose only 440 Hz in the UI. This keeps
-future calibration support straightforward.
+The implementation accepts the A4 reference as a parameter internally
+and now exposes that calibration in the UI within the supported
+`400.0..=480.0` Hz range.
 
 ## Repository Layout
 

@@ -11,9 +11,15 @@ BarWidget {
   property bool helperProcessStarted: false
   property bool helperReadySeen: false
   property bool restartPending: false
+  property bool helperRecoveryPending: false
   property string helperState: "inactive"
   property string helperErrorCode: ""
   property string helperError: ""
+  property int helperRecoveryAttempt: 0
+  property string helperRecoveryMessage: ""
+  property string recoverableStartupErrorCode: ""
+  property string recoverableStartupErrorMessage: ""
+  property int helperRestartDelayMs: 120
   property string runtimeErrorCode: ""
   property string runtimeErrorMessage: ""
   property bool settingsHydrating: false
@@ -41,6 +47,8 @@ BarWidget {
   readonly property int maximumReferenceMidiNumber: 119
   readonly property real minimumReferenceAHz: 400.0
   readonly property real maximumReferenceAHz: 480.0
+  readonly property int settingsConfigVersion: 1
+  readonly property int helperRecoveryMaxAttempts: 5
   readonly property var sharpPitchClasses: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
   readonly property var flatPitchClasses: ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
   readonly property var pitchClasses: noteSpelling === "flats" ? flatPitchClasses : sharpPitchClasses
@@ -79,7 +87,7 @@ BarWidget {
   readonly property bool pitchActive: signalState === "pitch"
   readonly property bool toneActive: activeToneNote !== ""
   readonly property bool inTune: pitchActive && Math.abs(detectedCents) <= 5
-  readonly property bool hasAlert: helperState === "error" || runtimeErrorMessage !== ""
+  readonly property bool hasAlert: helperRecoveryPending || helperState === "error" || runtimeErrorMessage !== ""
   readonly property bool popupExpanded: popupLayoutMode === "expanded"
   readonly property bool shouldAnimateUi: !reducedMotionMode
   readonly property bool standardGuitarPresetSelected: selectedPresetId === "guitar.standard"
@@ -92,12 +100,17 @@ BarWidget {
   readonly property string selectedReferenceNoteLabel: formatMidiNote(selectedReferenceMidiNumber, noteSpelling)
   readonly property string detectedNoteLabel: displayNoteLabel(detectedNote)
   readonly property string activeToneNoteLabel: displayNoteLabel(activeToneNote)
+  readonly property string helperRecoveryStatusText: {
+    if (!helperRecoveryPending) return ""
+    return "Recovering the audio helper (attempt " + helperRecoveryAttempt + " of " + helperRecoveryMaxAttempts + "). " + helperRecoveryMessage
+  }
   readonly property string pitchGuidanceText: {
     if (!pitchActive) return ""
     if (inTune) return "In tune"
     return detectedCents < 0 ? "Tune up" : "Tune down"
   }
   readonly property string stateBadgeText: {
+    if (helperRecoveryPending) return "RECOVERING"
     if (helperState === "error" || runtimeErrorMessage !== "") return "ERROR"
     if (helperState === "inactive") return "OFF"
     if (helperState === "starting") return "STARTING"
@@ -118,6 +131,7 @@ BarWidget {
     formatReferenceAForHelper(referenceAHz),
   ]
   readonly property string readoutTitleText: {
+    if (helperRecoveryPending) return "..."
     if (pitchActive) return detectedNoteLabel
     if (toneActive) return activeToneNoteLabel
     if (helperState === "error" || runtimeErrorMessage !== "") return "ERR"
@@ -128,6 +142,7 @@ BarWidget {
   readonly property string readoutFooterText: {
     if (pitchActive) return formatSignedCents(detectedCents) + " | " + formatFrequency(detectedFrequencyHz) + " Hz"
     if (toneActive) return "Reference tone | " + formatFrequency(activeToneFrequencyHz) + " Hz | A4 = " + formatReferenceA(referenceAHz)
+    if (helperRecoveryPending) return helperRecoveryStatusText
     if (helperState === "starting") return "Opening microphone and output..."
     if (helperState === "inactive") return "Tuner is off"
     if (helperState === "error") return "Restart the helper to recover"
@@ -135,6 +150,7 @@ BarWidget {
     return "Listening..."
   }
   readonly property string statusText: {
+    if (helperRecoveryPending) return helperRecoveryStatusText
     if (helperState === "error") return helperError !== "" ? helperError : "The audio helper stopped unexpectedly."
     if (runtimeErrorMessage !== "") return runtimeErrorMessage
     if (helperState === "inactive") return "Open the tuner or turn it on to begin capture."
@@ -153,6 +169,7 @@ BarWidget {
     return "Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
   }
   readonly property string buttonText: {
+    if (helperRecoveryPending) return "..."
     if (helperState === "error" || runtimeErrorMessage !== "") return "ERR"
     if (helperState === "inactive") return "OFF"
     if (helperState === "starting") return "..."
@@ -164,7 +181,8 @@ BarWidget {
   readonly property string tooltipText: {
     var lines = ["Omatune"]
 
-    if (helperState === "inactive") lines.push("state: off")
+    if (helperRecoveryPending) lines.push("state: recovering")
+    else if (helperState === "inactive") lines.push("state: off")
     else if (helperState === "starting") lines.push("state: starting")
     else if (helperState === "error") lines.push("state: error")
     else if (pitchActive) lines.push("state: pitch")
@@ -176,6 +194,7 @@ BarWidget {
     lines.push("preset: " + selectedPresetLabel)
     lines.push("A4: " + formatReferenceA(referenceAHz))
     lines.push("spelling: " + noteSpelling)
+    if (helperRecoveryPending) lines.push("recovery: attempt " + helperRecoveryAttempt + " of " + helperRecoveryMaxAttempts)
     if (helperError !== "") lines.push("helper error: " + helperError)
     if (runtimeErrorMessage !== "") lines.push("runtime error: " + runtimeErrorMessage)
     if (lastStderrLine !== "") lines.push("stderr: " + lastStderrLine)
@@ -358,7 +377,7 @@ BarWidget {
     for (var key in existingSettings)
       if (key !== "id") entry[key] = existingSettings[key]
 
-    entry.configVersion = 1
+    entry.configVersion = settingsConfigVersion
     entry.referenceAHz = normalizeReferenceAHz(referenceAHz)
     entry.noteSpelling = normalizeNoteSpelling(noteSpelling)
     entry.selectedPresetId = selectedPresetId
@@ -514,6 +533,91 @@ BarWidget {
     runtimeErrorMessage = ""
   }
 
+  function clearRecoverableStartupFailure() {
+    recoverableStartupErrorCode = ""
+    recoverableStartupErrorMessage = ""
+  }
+
+  function clearRecoveryState() {
+    helperRecoveryPending = false
+    helperRecoveryAttempt = 0
+    helperRecoveryMessage = ""
+    helperRestartDelayMs = 120
+    clearRecoverableStartupFailure()
+  }
+
+  function helperExitMessage(exitCode) {
+    if (lastStderrLine !== "") return lastStderrLine
+
+    var numeric = Math.round(finiteNumber(exitCode, 0))
+    return numeric === 0 ? "helper exited unexpectedly" : ("helper exited unexpectedly with code " + numeric)
+  }
+
+  function isRecoverableHelperErrorCode(code) {
+    var value = String(code || "")
+    return value === "audio_input_unavailable" || value === "audio_input_disconnected" || value === "helper_exit"
+  }
+
+  function recoveryDelayMsForAttempt(attempt) {
+    var numeric = Math.max(1, Math.round(finiteNumber(attempt, 1)))
+    if (numeric <= 1) return 250
+    if (numeric === 2) return 500
+    if (numeric === 3) return 1000
+    if (numeric === 4) return 2000
+    return 4000
+  }
+
+  function scheduleHelperRecovery(reason, messageText) {
+    var recoveryReason = String(reason || "")
+    if (!helperWanted || !isRecoverableHelperErrorCode(recoveryReason)) return false
+    if (helperRecoveryPending && restartPending) return true
+
+    var nextAttempt = helperRecoveryAttempt + 1
+    var recoveryMessage = String(messageText || "helper recovery was requested")
+    if (nextAttempt > helperRecoveryMaxAttempts) {
+      restartPending = false
+      helperWanted = false
+      helperState = "error"
+      helperErrorCode = recoveryReason
+      helperError = recoveryMessage + " Retry limit reached; restart the tuner after the audio stack is available."
+      runtimeErrorCode = recoveryReason === "helper_exit" ? "" : recoveryReason
+      runtimeErrorMessage = recoveryReason === "helper_exit" ? "" : helperError
+      pendingCommandLines = []
+      clearPitchState()
+      clearToneState()
+      clearRecoveryState()
+      return false
+    }
+
+    helperRecoveryPending = true
+    helperRecoveryAttempt = nextAttempt
+    helperRecoveryMessage = recoveryMessage
+    helperRestartDelayMs = recoveryDelayMsForAttempt(nextAttempt)
+    helperState = "starting"
+    helperReadySeen = false
+    helperProcessStarted = false
+    helperErrorCode = recoveryReason
+    helperError = ""
+    if (recoveryReason === "helper_exit") clearRuntimeError()
+    else {
+      runtimeErrorCode = recoveryReason
+      runtimeErrorMessage = recoveryMessage
+    }
+    clearRecoverableStartupFailure()
+    clearPitchState()
+    clearToneState()
+
+    if (helperProc.running) {
+      restartPending = true
+      helperProc.running = false
+    } else {
+      restartPending = false
+      helperRestartTimer.restart()
+    }
+
+    return true
+  }
+
   function resetLiveState() {
     clearPitchState()
     clearToneState()
@@ -550,12 +654,19 @@ BarWidget {
   }
 
   function startHelper() {
+    var preserveRecoveryState = arguments.length > 0 ? !!arguments[0] : false
+
+    helperRestartTimer.stop()
     restartPending = false
-    pendingCommandLines = []
+    if (!preserveRecoveryState) {
+      pendingCommandLines = []
+      clearRecoveryState()
+    }
     ensureHelperRunning()
   }
 
   function stopHelper() {
+    helperRestartTimer.stop()
     restartPending = false
     helperWanted = false
     helperProcessStarted = false
@@ -565,12 +676,14 @@ BarWidget {
     helperError = ""
     pendingCommandLines = []
     lastExitCode = 0
+    clearRecoveryState()
     resetLiveState()
 
     if (helperProc.running) helperProc.running = false
   }
 
   function restartHelper() {
+    helperRestartTimer.stop()
     restartPending = false
     helperWanted = false
     helperProcessStarted = false
@@ -580,6 +693,7 @@ BarWidget {
     helperError = ""
     pendingCommandLines = []
     lastExitCode = 0
+    clearRecoveryState()
     resetLiveState()
 
     if (helperProc.running) {
@@ -709,6 +823,7 @@ BarWidget {
     detectedFrequencyHz = Math.max(0, finiteNumber(message.frequency_hz, 0))
     detectedCents = clampNumber(message.cents, -50, 50, 0)
     detectedConfidence = clampNumber(message.confidence, 0, 1, 0)
+    if (isOutputErrorCode(runtimeErrorCode)) clearRuntimeError()
   }
 
   function handleRuntimeError(code, messageText) {
@@ -717,6 +832,7 @@ BarWidget {
 
     if (isOutputErrorCode(code)) clearToneState()
     if (isInputErrorCode(code)) clearPitchState()
+    if (isRecoverableHelperErrorCode(code)) scheduleHelperRecovery(code, messageText)
   }
 
   function handleHelperStdout(rawLine) {
@@ -734,6 +850,7 @@ BarWidget {
       helperReadySeen = false
       helperProcessStarted = false
       pendingCommandLines = []
+      clearRecoveryState()
       if (helperProc.running) helperProc.running = false
       return
     }
@@ -745,6 +862,8 @@ BarWidget {
       helperReadySeen = true
       helperErrorCode = ""
       helperError = ""
+      clearRuntimeError()
+      clearRecoveryState()
       return
     }
 
@@ -757,6 +876,7 @@ BarWidget {
       helperState = "active"
       helperReadySeen = true
       setNoSignal()
+      if (isOutputErrorCode(runtimeErrorCode)) clearRuntimeError()
       return
     }
 
@@ -783,6 +903,17 @@ BarWidget {
       var messageText = String(message.message || code || "helper reported an error")
 
       if (!helperReadySeen) {
+        if (helperWanted && isRecoverableHelperErrorCode(code)) {
+          recoverableStartupErrorCode = code
+          recoverableStartupErrorMessage = messageText
+          helperState = "starting"
+          helperErrorCode = code
+          helperError = ""
+          runtimeErrorCode = code
+          runtimeErrorMessage = messageText
+          return
+        }
+
         helperState = "error"
         helperErrorCode = code
         helperError = messageText
@@ -800,6 +931,7 @@ BarWidget {
     helperReadySeen = false
     helperProcessStarted = false
     pendingCommandLines = []
+    clearRecoveryState()
     if (helperProc.running) helperProc.running = false
   }
 
@@ -814,29 +946,39 @@ BarWidget {
 
     if (restartPending) {
       restartPending = false
-      helperWanted = false
       lastExitCode = 0
       helperRestartTimer.restart()
       return
     }
 
+    if (recoverableStartupErrorCode !== "" && helperWanted) {
+      var startupErrorCode = recoverableStartupErrorCode
+      var startupErrorMessage = recoverableStartupErrorMessage !== ""
+        ? recoverableStartupErrorMessage
+        : helperExitMessage(exitCode)
+      lastExitCode = Number(exitCode)
+      clearRecoverableStartupFailure()
+      if (scheduleHelperRecovery(startupErrorCode, startupErrorMessage)) return
+    }
+
     if (!helperWanted) {
-      lastExitCode = 0
+      if (helperState !== "error") lastExitCode = 0
+      clearRecoverableStartupFailure()
       return
     }
 
     lastExitCode = Number(exitCode)
-    helperWanted = false
     pendingCommandLines = []
     clearPitchState()
     clearToneState()
+    if (scheduleHelperRecovery("helper_exit", helperExitMessage(exitCode))) return
+
+    helperWanted = false
 
     if (helperState !== "error") {
       helperState = "error"
       helperErrorCode = "helper_exit"
-      helperError = lastStderrLine !== ""
-        ? lastStderrLine
-        : "helper exited unexpectedly"
+      helperError = helperExitMessage(exitCode)
     }
   }
 
@@ -879,8 +1021,8 @@ BarWidget {
 
   Timer {
     id: helperRestartTimer
-    interval: 120
-    onTriggered: root.startHelper()
+    interval: root.helperRestartDelayMs
+    onTriggered: root.startHelper(root.helperRecoveryPending)
   }
 
   Process {

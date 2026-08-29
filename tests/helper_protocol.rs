@@ -1,5 +1,6 @@
-use std::io::Write;
-use std::process::{Command, Output, Stdio};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -7,12 +8,11 @@ fn helper_bin() -> &'static str {
     env!("CARGO_BIN_EXE_omatune-helper")
 }
 
-fn run_helper_with_input(
-    stdin_text: &str,
-    input_mode: Option<&str>,
-    output_mode: Option<&str>,
-    args: &[&str],
-) -> Output {
+fn launcher_script() -> String {
+    format!("{}/scripts/run-helper.sh", env!("CARGO_MANIFEST_DIR"))
+}
+
+fn spawn_helper(input_mode: Option<&str>, output_mode: Option<&str>, args: &[&str]) -> Child {
     let mut command = Command::new(helper_bin());
     command
         .stdin(Stdio::piped())
@@ -26,7 +26,16 @@ fn run_helper_with_input(
         command.env("OMATUNE_TEST_OUTPUT_MODE", mode);
     }
 
-    let mut child = command.spawn().expect("failed to spawn helper");
+    command.spawn().expect("failed to spawn helper")
+}
+
+fn run_helper_with_input(
+    stdin_text: &str,
+    input_mode: Option<&str>,
+    output_mode: Option<&str>,
+    args: &[&str],
+) -> Output {
+    let mut child = spawn_helper(input_mode, output_mode, args);
     if !stdin_text.is_empty() {
         let mut stdin = child.stdin.take().expect("missing helper stdin");
         stdin
@@ -38,64 +47,119 @@ fn run_helper_with_input(
     child.wait_with_output().expect("failed to wait for helper")
 }
 
-fn run_helper_with_delay_before_eof(
-    delay: Duration,
-    input_mode: Option<&str>,
-    output_mode: Option<&str>,
-    args: &[&str],
-) -> Output {
-    let mut command = Command::new(helper_bin());
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    command.args(args);
-    if let Some(mode) = input_mode {
-        command.env("OMATUNE_TEST_INPUT_MODE", mode);
-    }
-    if let Some(mode) = output_mode {
-        command.env("OMATUNE_TEST_OUTPUT_MODE", mode);
-    }
-
-    let mut child = command.spawn().expect("failed to spawn helper");
-    let stdin = child.stdin.take().expect("missing helper stdin");
-    thread::sleep(delay);
-    drop(stdin);
-
-    child.wait_with_output().expect("failed to wait for helper")
-}
-
-fn run_helper_with_input_and_delay_before_eof(
+fn run_helper_until_stdout_lines(
     stdin_text: &str,
-    delay: Duration,
+    stdout_lines_before_eof: usize,
     input_mode: Option<&str>,
     output_mode: Option<&str>,
     args: &[&str],
 ) -> Output {
-    let mut command = Command::new(helper_bin());
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    command.args(args);
-    if let Some(mode) = input_mode {
-        command.env("OMATUNE_TEST_INPUT_MODE", mode);
-    }
-    if let Some(mode) = output_mode {
-        command.env("OMATUNE_TEST_OUTPUT_MODE", mode);
-    }
-
-    let mut child = command.spawn().expect("failed to spawn helper");
+    let mut child = spawn_helper(input_mode, output_mode, args);
     let mut stdin = child.stdin.take().expect("missing helper stdin");
+    let stdout = child.stdout.take().expect("missing helper stdout");
+    let stderr = child.stderr.take().expect("missing helper stderr");
+    let (line_tx, line_rx) = mpsc::sync_channel::<()>(stdout_lines_before_eof.max(1));
+
+    let stdout_thread = thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut bytes = Vec::new();
+
+        loop {
+            let mut line = String::new();
+            let read = reader
+                .read_line(&mut line)
+                .expect("failed to read helper stdout");
+            if read == 0 {
+                break;
+            }
+
+            bytes.extend_from_slice(line.as_bytes());
+            let _ = line_tx.send(());
+        }
+
+        bytes
+    });
+
+    let stderr_thread = thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .expect("failed to read helper stderr");
+        bytes
+    });
+
     if !stdin_text.is_empty() {
         stdin
             .write_all(stdin_text.as_bytes())
             .expect("failed to write helper stdin");
     }
-    thread::sleep(delay);
+
+    for _ in 0..stdout_lines_before_eof {
+        line_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("timed out waiting for helper stdout");
+    }
+
     drop(stdin);
 
-    child.wait_with_output().expect("failed to wait for helper")
+    let status = child.wait().expect("failed to wait for helper");
+    let stdout = stdout_thread.join().expect("stdout collector panicked");
+    let stderr = stderr_thread.join().expect("stderr collector panicked");
+
+    Output {
+        status,
+        stdout,
+        stderr,
+    }
+}
+
+fn run_helper_until_exit(
+    stdin_text: &str,
+    input_mode: Option<&str>,
+    output_mode: Option<&str>,
+    args: &[&str],
+) -> Output {
+    let mut child = spawn_helper(input_mode, output_mode, args);
+    let mut stdin = child.stdin.take().expect("missing helper stdin");
+    let stdout = child.stdout.take().expect("missing helper stdout");
+    let stderr = child.stderr.take().expect("missing helper stderr");
+
+    let stdout_thread = thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .expect("failed to read helper stdout");
+        bytes
+    });
+
+    let stderr_thread = thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .expect("failed to read helper stderr");
+        bytes
+    });
+
+    if !stdin_text.is_empty() {
+        stdin
+            .write_all(stdin_text.as_bytes())
+            .expect("failed to write helper stdin");
+    }
+
+    let status = child.wait().expect("failed to wait for helper");
+    drop(stdin);
+
+    let stdout = stdout_thread.join().expect("stdout collector panicked");
+    let stderr = stderr_thread.join().expect("stderr collector panicked");
+
+    Output {
+        status,
+        stdout,
+        stderr,
+    }
 }
 
 fn stdout_lines(output: &Output) -> Vec<String> {
@@ -104,6 +168,68 @@ fn stdout_lines(output: &Output) -> Vec<String> {
         .lines()
         .map(str::to_owned)
         .collect()
+}
+
+#[test]
+fn helper_cli_help_is_stable() {
+    let output = Command::new(helper_bin())
+        .arg("--help")
+        .output()
+        .expect("failed to run helper --help");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Usage: omatune-helper [--reference-a-hz <hz>] [--help] [--version]\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>  Set startup calibration within 400.0..=480.0 Hz\n  -h, --help             Print this help text and exit\n  -V, --version          Print helper version and exit\n"
+    );
+    assert_eq!(String::from_utf8(output.stderr).unwrap(), "");
+}
+
+#[test]
+fn helper_cli_version_is_stable() {
+    let output = Command::new(helper_bin())
+        .arg("--version")
+        .output()
+        .expect("failed to run helper --version");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("omatune-helper {}\n", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(String::from_utf8(output.stderr).unwrap(), "");
+}
+
+#[test]
+fn launcher_override_forwards_cli_args_to_helper() {
+    let output = Command::new("bash")
+        .arg(launcher_script())
+        .arg("--version")
+        .env("OMATUNE_HELPER_BIN", helper_bin())
+        .output()
+        .expect("failed to run helper launcher");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("omatune-helper {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn launcher_fails_clearly_for_non_executable_override() {
+    let output = Command::new("bash")
+        .arg(launcher_script())
+        .arg("--version")
+        .env("OMATUNE_HELPER_BIN", "/definitely/missing/omatune-helper")
+        .output()
+        .expect("failed to run helper launcher with bad override");
+
+    assert!(!output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "");
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("OMATUNE_HELPER_BIN is set but not executable"));
 }
 
 #[test]
@@ -122,12 +248,7 @@ fn startup_input_failure_emits_error_before_ready() {
 #[test]
 fn repeated_startup_cycles_keep_ready_before_no_signal() {
     for _ in 0..3 {
-        let output = run_helper_with_delay_before_eof(
-            Duration::from_millis(30),
-            Some("no_signal"),
-            Some("ok"),
-            &[],
-        );
+        let output = run_helper_until_stdout_lines("", 2, Some("no_signal"), Some("ok"), &[]);
         let lines = stdout_lines(&output);
 
         assert!(output.status.success());
@@ -181,13 +302,33 @@ fn runtime_output_failure_is_reported_without_crashing_helper() {
 }
 
 #[test]
-fn runtime_input_disconnect_is_reported_after_ready() {
-    let output = run_helper_with_delay_before_eof(
-        Duration::from_millis(160),
-        Some("disconnect"),
+fn invalid_commands_do_not_crash_or_block_later_valid_commands() {
+    let output = run_helper_with_input(
+        "[]\n{\"type\":1}\n{\"type\":\"play_tone\",\"note\":\"H2\"}\n{\"type\":\"set_reference_a\",\"frequency_hz\":399.0}\n{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"stop_tone\"}\n",
+        Some("idle"),
         Some("ok"),
         &[],
     );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"error","code":"invalid_command","message":"invalid command: command must be a JSON object"}"#.to_owned(),
+            r#"{"type":"error","code":"invalid_command","message":"invalid command: missing string field 'type'"}"#.to_owned(),
+            r#"{"type":"error","code":"invalid_note","message":"invalid note: invalid note letter 'H'"}"#.to_owned(),
+            r#"{"type":"error","code":"invalid_reference_frequency","message":"invalid reference A frequency: reference A frequency must be within 400.0..=480.0 Hz"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0}"#.to_owned(),
+            r#"{"type":"tone_stopped"}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn runtime_input_disconnect_is_reported_after_ready() {
+    let output = run_helper_until_stdout_lines("", 2, Some("disconnect"), Some("ok"), &[]);
     let lines = stdout_lines(&output);
 
     assert!(output.status.success());
@@ -201,13 +342,18 @@ fn runtime_input_disconnect_is_reported_after_ready() {
 }
 
 #[test]
+fn helper_can_exit_after_ready_for_recovery_testing() {
+    let output = run_helper_until_exit("", Some("exit:91"), Some("ok"), &[]);
+    let lines = stdout_lines(&output);
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(91));
+    assert_eq!(lines, vec![r#"{"type":"ready"}"#.to_owned()]);
+}
+
+#[test]
 fn simulated_pitch_is_emitted_after_ready() {
-    let output = run_helper_with_delay_before_eof(
-        Duration::from_millis(30),
-        Some("pitch:A4"),
-        Some("ok"),
-        &[],
-    );
+    let output = run_helper_until_stdout_lines("", 2, Some("pitch:A4"), Some("ok"), &[]);
     let lines = stdout_lines(&output);
 
     assert!(output.status.success());
@@ -220,9 +366,9 @@ fn simulated_pitch_is_emitted_after_ready() {
 
 #[test]
 fn startup_reference_a_argument_calibrates_initial_pitch_and_tone() {
-    let output = run_helper_with_input_and_delay_before_eof(
+    let output = run_helper_until_stdout_lines(
         "{\"type\":\"play_tone\",\"note\":\"A4\"}\n",
-        Duration::from_millis(30),
+        3,
         Some("pitch:A4"),
         Some("ok"),
         &["--reference-a-hz", "442.0"],

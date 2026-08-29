@@ -9,8 +9,13 @@ packaged_helper="$repo_root/bin/omatune-helper"
 debug_helper="$repo_root/target/debug/omatune-helper"
 release_helper="$repo_root/target/release/omatune-helper"
 
-if [[ -n "${OMATUNE_HELPER_BIN:-}" && -x "${OMATUNE_HELPER_BIN}" ]]; then
-  exec "${OMATUNE_HELPER_BIN}" "$@"
+if [[ -n "${OMATUNE_HELPER_BIN:-}" ]]; then
+  if [[ -x "${OMATUNE_HELPER_BIN}" ]]; then
+    exec "${OMATUNE_HELPER_BIN}" "$@"
+  fi
+
+  printf '%s\n' "omatune-helper launcher: OMATUNE_HELPER_BIN is set but not executable: ${OMATUNE_HELPER_BIN}" >&2
+  exit 1
 fi
 
 if [[ -x "$packaged_helper" ]]; then

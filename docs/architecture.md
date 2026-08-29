@@ -62,8 +62,12 @@ Output path:
 -   stderr is reserved for diagnostics and logs.
 -   The helper writes `ready` before allowing the input worker to emit
     `pitch` or `no_signal` messages.
--   The QML launcher prefers a packaged plugin-local helper binary, then
-    local build outputs, then a development `cargo run` fallback.
+-   The QML side performs bounded automatic restart attempts after
+    unexpected helper exit and recoverable input-side startup/runtime
+    failures.
+-   The QML launcher honors an explicit `OMATUNE_HELPER_BIN` override,
+    then prefers a packaged plugin-local helper binary, then local build
+    outputs, then a development `cargo run` fallback.
 -   Persisted widget settings live in the bar entry inside Omarchy's
     `shell.json`; the helper receives the current reference A value at
     startup and can also receive additive runtime updates over the

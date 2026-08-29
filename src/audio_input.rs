@@ -29,6 +29,7 @@ enum MockInputMode {
     Idle,
     NoSignal,
     Disconnect,
+    ExitProcess(i32),
     Pitch(Note),
 }
 
@@ -147,6 +148,19 @@ impl MockInputMode {
         if mode == "disconnect" {
             return Ok(Some(Self::Disconnect));
         }
+        if let Some(code_text) = mode.strip_prefix("exit:") {
+            let code = code_text.parse::<i32>().map_err(|_| {
+                InputStartupError::internal(format!(
+                    "invalid OMATUNE_TEST_INPUT_MODE exit code '{code_text}'"
+                ))
+            })?;
+            if !(0..=255).contains(&code) {
+                return Err(InputStartupError::internal(format!(
+                    "OMATUNE_TEST_INPUT_MODE exit code must be within 0..=255, got {code}"
+                )));
+            }
+            return Ok(Some(Self::ExitProcess(code)));
+        }
         if mode == "unavailable" {
             return Err(InputStartupError::unavailable(
                 "simulated microphone input unavailable",
@@ -211,6 +225,10 @@ fn input_mock_worker_loop(
                 ErrorCode::AudioInputDisconnected,
                 "simulated microphone input disconnected".to_owned(),
             );
+        }
+        MockInputMode::ExitProcess(code) => {
+            thread::sleep(Duration::from_millis(75));
+            std::process::exit(code);
         }
         MockInputMode::Pitch(note) => {
             let Ok(frequency_hz) = note.frequency_hz(shared_config.reference_a_hz()) else {

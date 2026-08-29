@@ -7,6 +7,13 @@ pub const MIN_REFERENCE_A_HZ: f64 = 400.0;
 pub const MAX_REFERENCE_A_HZ: f64 = 480.0;
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum HelperCliAction {
+    Run(StartupConfig),
+    PrintHelp,
+    PrintVersion,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct StartupConfig {
     pub reference_a_hz: f64,
 }
@@ -115,7 +122,7 @@ pub fn validate_reference_a_hz(reference_a_hz: f64) -> Result<f64, ReferenceAErr
     Ok(reference_a_hz)
 }
 
-pub fn parse_startup_config<I>(args: I) -> Result<StartupConfig, StartupConfigError>
+pub fn parse_helper_cli<I>(args: I) -> Result<HelperCliAction, StartupConfigError>
 where
     I: IntoIterator<Item = String>,
 {
@@ -130,6 +137,8 @@ where
         }
 
         match argument.as_str() {
+            "-h" | "--help" => return Ok(HelperCliAction::PrintHelp),
+            "-V" | "--version" => return Ok(HelperCliAction::PrintVersion),
             "--reference-a-hz" => {
                 let value = args
                     .next()
@@ -140,7 +149,7 @@ where
         }
     }
 
-    Ok(config)
+    Ok(HelperCliAction::Run(config))
 }
 
 fn parse_reference_a_hz_argument(value: &str) -> Result<f64, StartupConfigError> {
@@ -156,7 +165,7 @@ fn parse_reference_a_hz_argument(value: &str) -> Result<f64, StartupConfigError>
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_startup_config, validate_reference_a_hz, ReferenceAError, StartupConfig,
+        parse_helper_cli, validate_reference_a_hz, HelperCliAction, ReferenceAError, StartupConfig,
         StartupConfigError, MAX_REFERENCE_A_HZ, MIN_REFERENCE_A_HZ,
     };
 
@@ -180,36 +189,56 @@ mod tests {
     #[test]
     fn parses_default_and_explicit_reference_a_values() {
         assert_eq!(
-            parse_startup_config(vec!["omatune-helper".to_owned()]).unwrap(),
-            StartupConfig::default()
+            parse_helper_cli(vec!["omatune-helper".to_owned()]).unwrap(),
+            HelperCliAction::Run(StartupConfig::default())
         );
         assert_eq!(
-            parse_startup_config(vec![
+            parse_helper_cli(vec![
                 "omatune-helper".to_owned(),
                 "--reference-a-hz".to_owned(),
                 "442.0".to_owned(),
             ])
             .unwrap(),
-            StartupConfig {
+            HelperCliAction::Run(StartupConfig {
                 reference_a_hz: 442.0,
-            }
+            })
         );
         assert_eq!(
-            parse_startup_config(vec![
+            parse_helper_cli(vec![
                 "omatune-helper".to_owned(),
                 "--reference-a-hz=432".to_owned(),
             ])
             .unwrap(),
-            StartupConfig {
+            HelperCliAction::Run(StartupConfig {
                 reference_a_hz: 432.0,
-            }
+            })
+        );
+    }
+
+    #[test]
+    fn parses_help_and_version_flags_without_starting_audio() {
+        assert_eq!(
+            parse_helper_cli(vec!["omatune-helper".to_owned(), "--help".to_owned()]).unwrap(),
+            HelperCliAction::PrintHelp
+        );
+        assert_eq!(
+            parse_helper_cli(vec!["omatune-helper".to_owned(), "-h".to_owned()]).unwrap(),
+            HelperCliAction::PrintHelp
+        );
+        assert_eq!(
+            parse_helper_cli(vec!["omatune-helper".to_owned(), "--version".to_owned()]).unwrap(),
+            HelperCliAction::PrintVersion
+        );
+        assert_eq!(
+            parse_helper_cli(vec!["omatune-helper".to_owned(), "-V".to_owned()]).unwrap(),
+            HelperCliAction::PrintVersion
         );
     }
 
     #[test]
     fn rejects_invalid_startup_arguments() {
         assert_eq!(
-            parse_startup_config(vec![
+            parse_helper_cli(vec![
                 "omatune-helper".to_owned(),
                 "--reference-a-hz".to_owned(),
             ])
@@ -217,7 +246,7 @@ mod tests {
             StartupConfigError::MissingValue("--reference-a-hz")
         );
         assert_eq!(
-            parse_startup_config(vec![
+            parse_helper_cli(vec![
                 "omatune-helper".to_owned(),
                 "--reference-a-hz".to_owned(),
                 "399.0".to_owned(),
@@ -226,7 +255,7 @@ mod tests {
             StartupConfigError::InvalidReferenceFrequency("399.0".to_owned())
         );
         assert_eq!(
-            parse_startup_config(vec!["omatune-helper".to_owned(), "--unknown".to_owned(),])
+            parse_helper_cli(vec!["omatune-helper".to_owned(), "--unknown".to_owned(),])
                 .unwrap_err(),
             StartupConfigError::UnexpectedArgument("--unknown".to_owned())
         );

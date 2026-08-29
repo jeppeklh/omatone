@@ -110,6 +110,7 @@ Useful local helper checks:
 
 ```bash
 cargo build --bin omatune-helper
+bash scripts/run-helper.sh --version
 bash scripts/run-helper.sh < /dev/null
 bash scripts/build-helper-release.sh
 ```
@@ -124,16 +125,18 @@ cargo run --quiet --bin omatune-helper <<< $'{"type":"play_tone","note":"A4"}\n{
 Additional Phase 4 helper check:
 
 ```bash
-bash -lc "sleep 1" | cargo run --quiet --bin omatune-helper
+cargo test --test helper_protocol helper_can_exit_after_ready_for_recovery_testing -- --exact
 ```
 
 Phase 6 deterministic helper checks:
 
 ```bash
 OMATUNE_TEST_INPUT_MODE=unavailable OMATUNE_TEST_OUTPUT_MODE=ok cargo run --quiet --bin omatune-helper
-bash -lc "sleep 0.20" | env OMATUNE_TEST_INPUT_MODE=disconnect OMATUNE_TEST_OUTPUT_MODE=ok cargo run --quiet --bin omatune-helper
-bash -lc "sleep 0.10" | env OMATUNE_TEST_INPUT_MODE=pitch:A4 OMATUNE_TEST_OUTPUT_MODE=ok cargo run --quiet --bin omatune-helper
-OMATUNE_TEST_INPUT_MODE=idle OMATUNE_TEST_OUTPUT_MODE=unavailable cargo run --quiet --bin omatune-helper <<< '{"type":"play_tone","note":"A4"}'
+cargo test --test helper_protocol repeated_startup_cycles_keep_ready_before_no_signal -- --exact
+cargo test --test helper_protocol runtime_input_disconnect_is_reported_after_ready -- --exact
+cargo test --test helper_protocol helper_can_exit_after_ready_for_recovery_testing -- --exact
+cargo test --test helper_protocol simulated_pitch_is_emitted_after_ready -- --exact
+cargo test --test helper_protocol runtime_output_failure_is_reported_without_crashing_helper -- --exact
 ```
 
 The helper contract remains:
@@ -161,7 +164,12 @@ The helper contract remains:
     selection.
 -   For Phase 6 verification, the helper supports environment-driven test
     modes that simulate startup input failure, runtime input disconnect,
-    no-signal, deterministic pitch, and output failure.
+    deterministic helper exit, no-signal, deterministic pitch, and output
+    failure.
 -   For packaging, `scripts/run-helper.sh` now prefers
+    `OMATUNE_HELPER_BIN` when explicitly set, then
     `bin/omatune-helper`, so a release build can stage one plugin-local
     executable instead of relying on a live Cargo build.
+-   `scripts/build-helper-release.sh` stages the packaged helper through a
+    temporary file before replacing `bin/omatune-helper`, so updates do
+    not leave a partially copied binary in the plugin root.

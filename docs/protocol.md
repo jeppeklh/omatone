@@ -27,7 +27,22 @@ Use newline-delimited JSON (NDJSON).
 
 Each line is one complete JSON object.
 
-stdout must contain protocol messages only.
+In protocol mode, stdout must contain protocol messages only.
+
+## Helper CLI
+
+Normal invocation starts the helper in protocol mode.
+
+Supported flags:
+
+-   `--reference-a-hz <hz>` sets startup calibration within
+    `400.0..=480.0` Hz;
+-   `-h`, `--help` print usage text and exit without starting audio;
+-   `-V`, `--version` print the helper version and exit without starting
+    audio.
+
+`--help` and `--version` are the only documented non-protocol stdout
+modes.
 
 ## Helper -\> UI Messages
 
@@ -136,6 +151,10 @@ Possible initial codes:
 -   `internal_error`
 
 A fatal error may be followed by helper termination.
+
+The current Phase 4 widget treats helper exit plus recoverable
+input-startup/input-disconnect failures as bounded auto-recovery cases
+rather than requiring manual restart every time.
 
 ## UI -\> Helper Commands
 

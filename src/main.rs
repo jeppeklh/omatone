@@ -1,6 +1,9 @@
 use omatune::audio_input::{AudioInput, InputStartupError};
 use omatune::audio_output::{ActiveTone, AudioOutput, OutputControlError};
-use omatune::config::{parse_startup_config, SharedConfig, StartupConfigError};
+use omatune::config::{
+    parse_helper_cli, HelperCliAction, SharedConfig, StartupConfig, StartupConfigError,
+    MAX_REFERENCE_A_HZ, MIN_REFERENCE_A_HZ,
+};
 use omatune::protocol::{parse_command, Command, ErrorCode, UiMessage};
 use omatune::protocol_io::ProtocolWriter;
 use std::io::{self, BufRead, Write};
@@ -17,9 +20,25 @@ fn main() -> ExitCode {
 }
 
 fn run() -> io::Result<()> {
+    match parse_helper_cli(std::env::args()) {
+        Ok(HelperCliAction::PrintHelp) => {
+            print_help();
+            return Ok(());
+        }
+        Ok(HelperCliAction::PrintVersion) => {
+            print_version();
+            return Ok(());
+        }
+        Ok(HelperCliAction::Run(startup_config)) => run_helper(startup_config),
+        Err(error) => {
+            let protocol_writer = ProtocolWriter::new();
+            Err(emit_startup_protocol_error(&protocol_writer, error))
+        }
+    }
+}
+
+fn run_helper(startup_config: StartupConfig) -> io::Result<()> {
     let protocol_writer = ProtocolWriter::new();
-    let startup_config = parse_startup_config(std::env::args())
-        .map_err(|error| emit_startup_protocol_error(&protocol_writer, error))?;
     let shared_config = SharedConfig::new(startup_config.reference_a_hz).map_err(|error| {
         emit_startup_error_message(
             &protocol_writer,
@@ -51,6 +70,16 @@ fn run() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn print_help() {
+    println!(
+        "Usage: omatune-helper [--reference-a-hz <hz>] [--help] [--version]\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>  Set startup calibration within {MIN_REFERENCE_A_HZ:.1}..={MAX_REFERENCE_A_HZ:.1} Hz\n  -h, --help             Print this help text and exit\n  -V, --version          Print helper version and exit"
+    );
+}
+
+fn print_version() {
+    println!("omatune-helper {}", env!("CARGO_PKG_VERSION"));
 }
 
 fn init_audio_input(
