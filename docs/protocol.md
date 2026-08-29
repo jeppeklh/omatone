@@ -115,8 +115,34 @@ Confirms that reference-tone playback has started.
       "frequency_hz": 440.0
     }
 
-The reported frequency is authoritative for the tone actually being
-generated.
+For Phase 5B/5C interval, drone, or chord playback, the same message
+remains in use, with additive fields:
+
+    {
+      "type": "tone_started",
+      "note": "A4",
+      "frequency_hz": 440.0,
+      "intervals_semitones": [12],
+      "voices": [
+        { "note": "A4", "frequency_hz": 440.0 },
+        { "note": "A5", "frequency_hz": 880.0 }
+      ]
+    }
+
+Rules:
+
+-   `note` and `frequency_hz` remain the root voice of the active
+    playback scene;
+-   `intervals_semitones`, when present, echoes the extra interval notes
+    above the root;
+-   `voices`, when present, lists every note actually being generated in
+    root-first order with authoritative frequencies;
+-   single-note playback may omit `intervals_semitones` and `voices` to
+    preserve the compact v0.1 message shape.
+
+Phase 5C simple chord presets still use this same representation. For
+example, `A4` major is rooted at `A4` with
+`intervals_semitones: [4, 7]` and voices `A4`, `C#5`, and `E5`.
 
 The current helper opens audio output lazily when a tone is first
 requested, rather than during initial startup.
@@ -169,6 +195,16 @@ Preferred command:
       "note": "A4"
     }
 
+Phase 5B/5C keeps the same command and adds an optional
+`intervals_semitones` array for bounded multi-note playback rooted at
+the selected note:
+
+    {
+      "type": "play_tone",
+      "note": "A4",
+      "intervals_semitones": [12]
+    }
+
 The helper calculates the frequency using the current reference A value.
 
 For v0.1 the default reference is A4 = 440 Hz.
@@ -178,12 +214,26 @@ guitar notes.
 
 For v0.1, the supported note range is `C0` through `B8`, inclusive.
 
+For Phase 5B/5C bounded multi-note playback:
+
+-   `intervals_semitones` is optional;
+-   when present, it must be an array of integers;
+-   each interval must be within `1..=24` semitones above the root;
+-   the helper currently accepts at most three interval entries, for a
+    maximum of four simultaneously generated notes including the root;
+-   duplicate interval entries are rejected;
+-   every derived note must still remain inside the supported `C0`
+    through `B8` range.
+
 Examples:
 
     {"type":"play_tone","note":"E2"}
     {"type":"play_tone","note":"C4"}
     {"type":"play_tone","note":"F#4"}
     {"type":"play_tone","note":"Bb3"}
+    {"type":"play_tone","note":"A4","intervals_semitones":[7]}
+    {"type":"play_tone","note":"A4","intervals_semitones":[12]}
+    {"type":"play_tone","note":"A4","intervals_semitones":[4,7]}
 
 The implementation should normalize or explicitly document accepted
 accidental notation. Internally, prefer one canonical representation.
@@ -202,6 +252,15 @@ The helper emits canonical note names using sharps:
 
 If a tone is already playing, `play_tone` replaces it without requiring
 a separate stop command.
+
+The current QML UI uses the same command for both additive playback
+workflows:
+
+-   `drone`: the selected note remains the sustained root and one
+    configured interval note is added above it;
+-   `chord`: the selected note remains the root and one fixed preset
+    shape such as major, minor, `sus2`, or `sus4` provides the upper
+    voices.
 
 ### Stop Tone
 
@@ -332,6 +391,8 @@ Valid stdout:
     {"type":"ready"}
     {"type":"pitch","note":"E2","frequency_hz":82.31,"cents":0.1,"confidence":0.97}
     {"type":"tone_started","note":"A2","frequency_hz":110.0}
+    {"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}
+    {"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}
     {"type":"tone_stopped"}
     {"type":"no_signal"}
 

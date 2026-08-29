@@ -83,13 +83,43 @@ FocusScope {
   Shortcut {
     sequence: "P"
     enabled: root.opened && !!root.hostWidget
-    onActivated: root.hostWidget.playSelectedTone()
+    onActivated: root.hostWidget.toggleSelectedReferenceTone()
   }
 
   Shortcut {
     sequence: "X"
     enabled: root.opened && !!root.hostWidget && root.hostWidget.toneActive
     onActivated: root.hostWidget.stopTone()
+  }
+
+  Shortcut {
+    sequence: "D"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.cycleReferencePlaybackMode()
+  }
+
+  Shortcut {
+    sequence: "["
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.changeSelectedReferenceShapePreset(-1)
+  }
+
+  Shortcut {
+    sequence: "]"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.changeSelectedReferenceShapePreset(1)
+  }
+
+  Shortcut {
+    sequence: "Left"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.changeReferenceSemitone(-1)
+  }
+
+  Shortcut {
+    sequence: "Right"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.changeReferenceSemitone(1)
   }
 
   Shortcut {
@@ -404,7 +434,7 @@ FocusScope {
           width: parent.width
           visible: keyboardHintText !== ""
           textFormat: Text.PlainText
-          text: keyboardHintText + " | Alt+Up/Down octave"
+          text: keyboardHintText
           color: root.quietTextColor
           opacity: root.secondaryTextOpacity
           font.family: root.fontFamily
@@ -441,9 +471,13 @@ FocusScope {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: root.hostWidget ? (root.hostWidget.standardGuitarPresetSelected
-            ? "Press 1-6 for the standard string references."
-            : "Preset notes stay one keypress away.") : ""
+          text: root.hostWidget ? (root.hostWidget.referencePlaybackMode === "drone"
+            ? "Quick notes reuse the current drone interval. Use Left/Right to move the root and [ or ] to change the interval."
+            : (root.hostWidget.referencePlaybackMode === "chord"
+              ? "Quick notes reuse the current chord shape. Use Left/Right to move the root and [ or ] to change the chord."
+              : (root.hostWidget.standardGuitarPresetSelected
+                ? "Press 1-6 for the standard string references. Use Left/Right to step chromatically."
+                : "Preset notes stay one keypress away. Use Left/Right to step chromatically."))) : ""
           color: root.quietTextColor
           opacity: root.secondaryTextOpacity
           font.family: root.fontFamily
@@ -569,6 +603,98 @@ FocusScope {
           font.bold: true
         }
 
+        ButtonGroup {
+          width: parent.width
+          options: [
+            { value: "single", label: "Single" },
+            { value: "drone", label: "Drone" },
+            { value: "chord", label: "Chord" },
+          ]
+          value: root.hostWidget ? root.hostWidget.referencePlaybackMode : "single"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          fontSize: Style.font.bodySmall
+          onChanged: function(value) {
+            if (root.hostWidget) root.hostWidget.setReferencePlaybackMode(value)
+          }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "drone" : false
+          textFormat: Text.PlainText
+          text: root.hostWidget
+            ? ("Drone keeps " + root.hostWidget.selectedReferenceNoteLabel + " sounding and adds one note above it.")
+            : ""
+          color: root.quietTextColor
+          opacity: root.secondaryTextOpacity
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+
+        Flow {
+          width: parent.width
+          visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "drone" : false
+          spacing: Style.space(6)
+
+          Repeater {
+            model: root.hostWidget ? root.hostWidget.referenceIntervalPresets : []
+
+            Button {
+              required property var modelData
+
+              text: String(modelData.label || "")
+              selected: root.hostWidget ? root.hostWidget.selectedReferenceIntervalSemitones === Number(modelData.semitones) : false
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              verticalPadding: Style.space(7)
+              focusable: true
+              onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceIntervalSemitones(Number(modelData.semitones))
+            }
+          }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "chord" : false
+          textFormat: Text.PlainText
+          text: root.hostWidget
+            ? ("Chord keeps " + root.hostWidget.selectedReferenceNoteLabel + " as the root and adds a fixed preset shape above it.")
+            : ""
+          color: root.quietTextColor
+          opacity: root.secondaryTextOpacity
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+
+        Flow {
+          width: parent.width
+          visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "chord" : false
+          spacing: Style.space(6)
+
+          Repeater {
+            model: root.hostWidget ? root.hostWidget.referenceChordPresets : []
+
+            Button {
+              required property var modelData
+
+              text: String(modelData.label || "")
+              selected: root.hostWidget ? root.hostWidget.selectedReferenceChordId === String(modelData.id || "") : false
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              verticalPadding: Style.space(7)
+              focusable: true
+              onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceChordId(String(modelData.id || ""))
+            }
+          }
+        }
+
         Grid {
           id: noteGrid
           width: parent.width
@@ -602,20 +728,20 @@ FocusScope {
           spacing: Style.space(6)
 
           Button {
-            id: octaveDownButton
+            id: previousNoteButton
             width: Style.space(48)
-            text: "-"
+            text: "<"
             bordered: true
             foreground: root.foreground
             fontFamily: root.fontFamily
             fontSize: Style.font.body
             focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceOctave(-1)
+            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceSemitone(-1)
           }
 
           BorderSurface {
-            width: parent.width - octaveDownButton.width - octaveUpButton.width - parent.spacing * 2
-            height: Math.max(octaveDownButton.implicitHeight, Style.space(34))
+            width: parent.width - previousNoteButton.width - nextNoteButton.width - parent.spacing * 2
+            height: Math.max(previousNoteButton.implicitHeight, Style.space(34))
             radius: Style.cornerRadius
             color: Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.05)
             borderSpec: Border.controlSpec(root.highContrast ? "focus" : "normal", root.foreground, Color.accent)
@@ -632,15 +758,15 @@ FocusScope {
           }
 
           Button {
-            id: octaveUpButton
+            id: nextNoteButton
             width: Style.space(48)
-            text: "+"
+            text: ">"
             bordered: true
             foreground: root.foreground
             fontFamily: root.fontFamily
             fontSize: Style.font.body
             focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceOctave(1)
+            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceSemitone(1)
           }
         }
 
@@ -649,27 +775,45 @@ FocusScope {
           spacing: Style.space(6)
 
           Button {
-            id: playToneButton
-            text: root.hostWidget ? ("Play " + root.hostWidget.selectedReferenceNoteLabel) : "Play"
-            selected: root.hostWidget ? root.hostWidget.toneActive : false
+            id: octaveDownButton
+            text: "Oct-"
+            width: Math.max(Style.space(58), implicitWidth)
             bordered: true
             foreground: root.foreground
             fontFamily: root.fontFamily
             fontSize: Style.font.bodySmall
             focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.playSelectedTone()
+            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceOctave(-1)
           }
 
           Button {
-            text: "Stop tone"
+            id: octaveUpButton
+            text: "Oct+"
+            width: Math.max(Style.space(58), implicitWidth)
             bordered: true
             foreground: root.foreground
             fontFamily: root.fontFamily
             fontSize: Style.font.bodySmall
             focusable: true
-            enabled: root.hostWidget ? root.hostWidget.toneActive : false
-            opacity: enabled ? 1.0 : 0.5
-            onClicked: if (root.hostWidget) root.hostWidget.stopTone()
+            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceOctave(1)
+          }
+
+          Button {
+            id: playToneButton
+            text: root.hostWidget
+              ? (root.hostWidget.selectedReferenceToneActive
+                ? ("Stop " + root.hostWidget.selectedReferenceSceneLabel)
+                : (root.hostWidget.toneActive
+                  ? ("Retune to " + root.hostWidget.selectedReferenceSceneLabel)
+                  : ("Play " + root.hostWidget.selectedReferenceSceneLabel)))
+              : "Play"
+            selected: root.hostWidget ? root.hostWidget.selectedReferenceToneActive : false
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            focusable: true
+            onClicked: if (root.hostWidget) root.hostWidget.toggleSelectedReferenceTone()
           }
         }
 

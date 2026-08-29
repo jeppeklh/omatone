@@ -1,5 +1,5 @@
 use omatune::audio_input::{AudioInput, InputStartupError};
-use omatune::audio_output::{ActiveTone, AudioOutput, OutputControlError};
+use omatune::audio_output::{AudioOutput, OutputControlError};
 use omatune::config::{
     parse_helper_cli, HelperCliAction, SharedConfig, StartupConfig, StartupConfigError,
     MAX_REFERENCE_A_HZ, MIN_REFERENCE_A_HZ,
@@ -97,10 +97,13 @@ fn handle_command(
     shared_config: &SharedConfig,
 ) -> io::Result<()> {
     match command {
-        Command::PlayTone { note } => match audio_output.play(note) {
-            Ok(frequency_hz) => {
-                protocol_writer.write_message(&UiMessage::ToneStarted { note, frequency_hz })?
-            }
+        Command::PlayTone { scene } => match audio_output.play(scene) {
+            Ok(active_tone) => protocol_writer.write_message(&UiMessage::ToneStarted {
+                note: active_tone.note,
+                frequency_hz: active_tone.frequency_hz,
+                intervals_semitones: active_tone.intervals_semitones,
+                voices: active_tone.voices,
+            })?,
             Err(error) => emit_control_error(protocol_writer, error)?,
         },
         Command::SetReferenceA { frequency_hz } => {
@@ -115,8 +118,13 @@ fn handle_command(
                 })?;
 
             match audio_output.refresh_reference_a() {
-                Ok(Some(ActiveTone { note, frequency_hz })) => {
-                    protocol_writer.write_message(&UiMessage::ToneStarted { note, frequency_hz })?
+                Ok(Some(active_tone)) => {
+                    protocol_writer.write_message(&UiMessage::ToneStarted {
+                        note: active_tone.note,
+                        frequency_hz: active_tone.frequency_hz,
+                        intervals_semitones: active_tone.intervals_semitones,
+                        voices: active_tone.voices,
+                    })?
                 }
                 Ok(None) => {}
                 Err(error) => emit_control_error(protocol_writer, error)?,

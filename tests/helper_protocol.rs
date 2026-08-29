@@ -282,6 +282,46 @@ fn play_and_stop_tone_work_without_real_audio_device_in_mock_mode() {
 }
 
 #[test]
+fn interval_playback_reports_root_and_all_generated_voices() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"intervals_semitones\":[12]}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn chord_playback_reports_root_and_all_generated_voices() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"intervals_semitones\":[4,7]}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
 fn runtime_output_failure_is_reported_without_crashing_helper() {
     let output = run_helper_with_input(
         "{\"type\":\"play_tone\",\"note\":\"A4\"}\n",
@@ -403,6 +443,48 @@ fn runtime_reference_a_update_restarts_active_tone_with_calibrated_frequency() {
             r#"{"type":"ready"}"#.to_owned(),
             r#"{"type":"tone_started","note":"A4","frequency_hz":440.0}"#.to_owned(),
             r#"{"type":"tone_started","note":"A4","frequency_hz":442.0}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn runtime_reference_a_update_restarts_active_interval_scene_with_calibrated_frequencies() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"intervals_semitones\":[12]}\n{\"type\":\"set_reference_a\",\"frequency_hz\":442.0}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":442.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":442.0},{"note":"A5","frequency_hz":884.0}]}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn runtime_reference_a_update_restarts_active_chord_scene_with_calibrated_frequencies() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"intervals_semitones\":[4,7]}\n{\"type\":\"set_reference_a\",\"frequency_hz\":442.0}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":442.0,"intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":442.0},{"note":"C#5","frequency_hz":556.885104053534},{"note":"E5","frequency_hz":662.2517279794932}]}"#.to_owned(),
         ]
     );
 }

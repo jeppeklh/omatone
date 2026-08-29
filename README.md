@@ -13,7 +13,8 @@ The tuner is chromatic. Standard guitar tuning is a convenient preset,
 not a limitation of the pitch detector.
 
 The plugin also provides reference-tone playback. A user can select a
-note and hear its exact reference pitch for tuning by ear.
+note and hear its exact reference pitch for tuning by ear, either alone,
+as a drone interval, or with a small fixed chord shape.
 
 ## Documentation
 
@@ -42,7 +43,8 @@ note and hear its exact reference pitch for tuning by ear.
 -   Real-time cents indicator
 -   Display detected note and frequency
 -   Microphone activation/deactivation
--   Reference-tone playback
+-   Single-note, drone-interval, and simple chord reference-tone
+    playback
 -   Arbitrary note selection for reference tones
 -   Adjustable A4 reference frequency in the supported calibration range
 -   Persisted reference note, tuning preset, and sharp/flat spelling

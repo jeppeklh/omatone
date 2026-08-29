@@ -30,10 +30,15 @@ BarWidget {
   property real detectedConfidence: 0
   property string activeToneNote: ""
   property real activeToneFrequencyHz: 0
+  property var activeToneIntervalsSemitones: []
+  property var activeToneVoices: []
   property real referenceAHz: 440.0
   property string noteSpelling: "sharps"
   property string selectedPresetId: "guitar.standard"
   property int selectedReferenceMidiNumber: 69
+  property string referencePlaybackMode: "single"
+  property int selectedReferenceIntervalSemitones: 7
+  property string selectedReferenceChordId: "major"
   property string popupLayoutMode: "compact"
   property bool highContrastMode: false
   property bool reducedMotionMode: false
@@ -47,11 +52,28 @@ BarWidget {
   readonly property int maximumReferenceMidiNumber: 119
   readonly property real minimumReferenceAHz: 400.0
   readonly property real maximumReferenceAHz: 480.0
+  readonly property int maximumReferenceIntervalSemitones: 24
   readonly property int settingsConfigVersion: 1
   readonly property int helperRecoveryMaxAttempts: 5
+  readonly property int defaultReferenceIntervalSemitones: 7
+  readonly property string defaultReferenceChordId: "major"
   readonly property var sharpPitchClasses: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
   readonly property var flatPitchClasses: ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
   readonly property var pitchClasses: noteSpelling === "flats" ? flatPitchClasses : sharpPitchClasses
+  readonly property var referencePlaybackModes: ["single", "drone", "chord"]
+  readonly property var referenceIntervalPresets: [
+    { semitones: 3, label: "m3" },
+    { semitones: 4, label: "M3" },
+    { semitones: 5, label: "P4" },
+    { semitones: 7, label: "P5" },
+    { semitones: 12, label: "Oct" },
+  ]
+  readonly property var referenceChordPresets: [
+    { id: "major", label: "Major", intervalsSemitones: [4, 7] },
+    { id: "minor", label: "Minor", intervalsSemitones: [3, 7] },
+    { id: "sus2", label: "Sus2", intervalsSemitones: [2, 7] },
+    { id: "sus4", label: "Sus4", intervalsSemitones: [5, 7] },
+  ]
   readonly property var tuningPresetGroups: [
     {
       label: "Guitar",
@@ -98,8 +120,38 @@ BarWidget {
   readonly property string selectedPresetLabel: selectedPreset ? (selectedPreset.groupLabel + " | " + selectedPreset.label) : "Guitar | Standard"
   readonly property string selectedReferenceCommandNoteLabel: formatMidiNote(selectedReferenceMidiNumber, "sharps")
   readonly property string selectedReferenceNoteLabel: formatMidiNote(selectedReferenceMidiNumber, noteSpelling)
+  readonly property int selectedReferenceIntervalPresetIndex: indexOfReferenceIntervalPreset(selectedReferenceIntervalSemitones)
+  readonly property int selectedReferenceChordPresetIndex: indexOfReferenceChordPreset(selectedReferenceChordId)
+  readonly property var selectedReferenceIntervalsSemitones: {
+    if (referencePlaybackMode === "drone") return [selectedReferenceIntervalSemitones]
+
+    if (referencePlaybackMode === "chord") {
+      var chordPreset = chordPresetById(selectedReferenceChordId)
+      return chordPreset ? chordPreset.intervalsSemitones.slice(0) : []
+    }
+
+    return []
+  }
   readonly property string detectedNoteLabel: displayNoteLabel(detectedNote)
   readonly property string activeToneNoteLabel: displayNoteLabel(activeToneNote)
+  readonly property string selectedReferenceSceneLabel: formatReferenceSceneLabel(selectedReferenceNoteLabel, selectedReferenceIntervalsSemitones)
+  readonly property bool activeToneHasIntervals: activeToneIntervalsSemitones.length > 0
+  readonly property string activeToneSceneKind: {
+    if (!toneActive) return ""
+    if (activeToneIntervalsSemitones.length > 1) return "chord"
+    if (activeToneIntervalsSemitones.length === 1) return "interval"
+    return "tone"
+  }
+  readonly property string activeTonePlaybackTypeText: {
+    if (activeToneSceneKind === "chord") return "Reference chord"
+    if (activeToneSceneKind === "interval") return "Drone interval"
+    return "Reference tone"
+  }
+  readonly property string activeToneSceneLabel: formatReferenceSceneLabel(activeToneNoteLabel, activeToneIntervalsSemitones)
+  readonly property string activeToneVoiceSummaryText: formatToneVoiceSummary(activeToneVoices)
+  readonly property bool selectedReferenceToneActive: toneActive
+    && sameNoteText(activeToneNote, selectedReferenceCommandNoteLabel)
+    && sameIntegerArray(activeToneIntervalsSemitones, selectedReferenceIntervalsSemitones)
   readonly property string helperRecoveryStatusText: {
     if (!helperRecoveryPending) return ""
     return "Recovering the audio helper (attempt " + helperRecoveryAttempt + " of " + helperRecoveryMaxAttempts + "). " + helperRecoveryMessage
@@ -116,11 +168,15 @@ BarWidget {
     if (helperState === "starting") return "STARTING"
     if (signalState === "no_signal") return "NO SIGNAL"
     if (pitchActive) return inTune ? "IN TUNE" : (detectedCents < 0 ? "TUNE UP" : "TUNE DOWN")
-    if (toneActive) return "REFERENCE"
+    if (toneActive) {
+      if (activeToneSceneKind === "chord") return "CHORD"
+      if (activeToneSceneKind === "interval") return "DRONE"
+      return "REFERENCE"
+    }
     return "LISTENING"
   }
   readonly property string quickTuneHeadingText: standardGuitarPresetSelected ? "Standard guitar" : "Quick tune"
-  readonly property string keyboardShortcutSummary: "Keys: 1-6 notes | P play | X stop | T power | R restart | Esc close"
+  readonly property string keyboardShortcutSummary: "Keys: 1-6 notes | Left/Right note | Alt+Up/Down octave | D mode | [/] shape | P play/stop | X stop | T power | R restart | Esc close"
   readonly property bool opened: popupLoader.item ? popupLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: popupLoader.item ? popupLoader.item.popoutSwitchClosing === true : false
   readonly property string helperScriptPath: localPath("scripts/run-helper.sh")
@@ -133,7 +189,7 @@ BarWidget {
   readonly property string readoutTitleText: {
     if (helperRecoveryPending) return "..."
     if (pitchActive) return detectedNoteLabel
-    if (toneActive) return activeToneNoteLabel
+    if (toneActive) return activeToneSceneLabel
     if (helperState === "error" || runtimeErrorMessage !== "") return "ERR"
     if (helperState === "starting") return "..."
     if (helperState === "inactive") return "OFF"
@@ -141,7 +197,7 @@ BarWidget {
   }
   readonly property string readoutFooterText: {
     if (pitchActive) return formatSignedCents(detectedCents) + " | " + formatFrequency(detectedFrequencyHz) + " Hz"
-    if (toneActive) return "Reference tone | " + formatFrequency(activeToneFrequencyHz) + " Hz | A4 = " + formatReferenceA(referenceAHz)
+    if (toneActive) return activeTonePlaybackTypeText + " | Root " + formatFrequency(activeToneFrequencyHz) + " Hz | A4 = " + formatReferenceA(referenceAHz)
     if (helperRecoveryPending) return helperRecoveryStatusText
     if (helperState === "starting") return "Opening microphone and output..."
     if (helperState === "inactive") return "Tuner is off"
@@ -157,12 +213,13 @@ BarWidget {
     if (helperState === "starting") return "Starting the audio helper..."
     if (signalState === "no_signal") return "No signal. Play a steady note into the microphone."
     if (pitchActive) return pitchGuidanceText + " | Confidence: " + Math.round(detectedConfidence * 100) + "%"
-    if (toneActive) return "Reference tone is active."
+    if (toneActive) return activeTonePlaybackTypeText + " is active."
     return "Listening for pitch..."
   }
   readonly property string detailText: {
     if (toneActive)
-      return "Reference tone: " + activeToneNoteLabel + " at " + formatFrequency(activeToneFrequencyHz) + " Hz"
+      return activeTonePlaybackTypeText + ": " + activeToneSceneLabel
+        + (activeToneVoiceSummaryText !== "" ? (" | Voices: " + activeToneVoiceSummaryText) : "")
         + " | Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
     if (pitchActive)
       return "Detected pitch is matched against the nearest equal-tempered note at A4 = " + formatReferenceA(referenceAHz) + "."
@@ -174,7 +231,7 @@ BarWidget {
     if (helperState === "inactive") return "OFF"
     if (helperState === "starting") return "..."
     if (pitchActive) return vertical ? (detectedNoteLabel + (inTune ? "=" : "")) : (detectedNoteLabel + (inTune ? " =" : (" " + formatCompactCents(detectedCents))))
-    if (toneActive) return activeToneNoteLabel
+    if (toneActive) return activeToneSceneKind === "tone" ? activeToneNoteLabel : (vertical ? (activeToneNoteLabel + "+") : (activeToneNoteLabel + " +"))
     if (signalState === "no_signal") return "SIG"
     return "ON"
   }
@@ -190,7 +247,7 @@ BarWidget {
     else lines.push("state: listening")
 
     if (pitchActive) lines.push("pitch: " + detectedNoteLabel + "  " + formatSignedCents(detectedCents) + "  " + formatFrequency(detectedFrequencyHz) + " Hz")
-    if (toneActive) lines.push("tone: " + activeToneNoteLabel + "  " + formatFrequency(activeToneFrequencyHz) + " Hz")
+    if (toneActive) lines.push("tone: " + activeToneSceneLabel + (activeToneVoiceSummaryText !== "" ? ("  " + activeToneVoiceSummaryText) : ""))
     lines.push("preset: " + selectedPresetLabel)
     lines.push("A4: " + formatReferenceA(referenceAHz))
     lines.push("spelling: " + noteSpelling)
@@ -199,7 +256,7 @@ BarWidget {
     if (runtimeErrorMessage !== "") lines.push("runtime error: " + runtimeErrorMessage)
     if (lastStderrLine !== "") lines.push("stderr: " + lastStderrLine)
     if (!helperProc.running && lastExitCode !== 0) lines.push("last exit code: " + lastExitCode)
-    lines.push("keys: 1-6 quick notes | p play | x stop | t power | r restart | esc close")
+    lines.push("keys: 1-6 quick notes | left/right note | alt+up/down octave | d mode | [/] shape | p play/stop | x stop | t power | r restart | esc close")
 
     lines.push("left click: open tuner")
     lines.push("right click: turn tuner on or off")
@@ -272,6 +329,174 @@ BarWidget {
 
   function normalizeNoteSpelling(value) {
     return String(value || "") === "flats" ? "flats" : "sharps"
+  }
+
+  function normalizeReferencePlaybackMode(value) {
+    var text = String(value || "")
+    if (text === "drone" || text === "chord") return text
+    return "single"
+  }
+
+  function indexOfReferenceIntervalPreset(value) {
+    var target = Math.round(finiteNumber(value, defaultReferenceIntervalSemitones))
+
+    for (var index = 0; index < referenceIntervalPresets.length; index++)
+      if (referenceIntervalPresets[index].semitones === target) return index
+
+    for (var fallbackIndex = 0; fallbackIndex < referenceIntervalPresets.length; fallbackIndex++)
+      if (referenceIntervalPresets[fallbackIndex].semitones === defaultReferenceIntervalSemitones) return fallbackIndex
+
+    return 0
+  }
+
+  function intervalPresetBySemitones(value) {
+    return referenceIntervalPresets[indexOfReferenceIntervalPreset(value)]
+  }
+
+  function normalizeSelectedReferenceIntervalSemitones(value) {
+    return intervalPresetBySemitones(value).semitones
+  }
+
+  function indexOfReferenceChordPreset(value) {
+    var targetId = String(value || "")
+
+    for (var index = 0; index < referenceChordPresets.length; index++)
+      if (String(referenceChordPresets[index].id || "") === targetId) return index
+
+    for (var fallbackIndex = 0; fallbackIndex < referenceChordPresets.length; fallbackIndex++)
+      if (String(referenceChordPresets[fallbackIndex].id || "") === defaultReferenceChordId) return fallbackIndex
+
+    return 0
+  }
+
+  function chordPresetById(value) {
+    return referenceChordPresets[indexOfReferenceChordPreset(value)]
+  }
+
+  function normalizeSelectedReferenceChordId(value) {
+    var preset = chordPresetById(value)
+    return preset ? String(preset.id || defaultReferenceChordId) : defaultReferenceChordId
+  }
+
+  function normalizeProtocolIntervalArray(values) {
+    if (!Array.isArray(values)) return []
+
+    var normalized = []
+    for (var index = 0; index < values.length; index++) {
+      var numeric = Math.round(finiteNumber(values[index], 0))
+      if (!isFinite(numeric) || numeric < 1 || numeric > maximumReferenceIntervalSemitones) continue
+      if (normalized.indexOf(numeric) >= 0) continue
+      normalized.push(numeric)
+    }
+
+    normalized.sort(function(left, right) { return left - right })
+    return normalized
+  }
+
+  function sameIntegerArray(left, right) {
+    var leftValues = Array.isArray(left) ? left : []
+    var rightValues = Array.isArray(right) ? right : []
+    if (leftValues.length !== rightValues.length) return false
+
+    for (var index = 0; index < leftValues.length; index++)
+      if (Math.round(finiteNumber(leftValues[index], 0)) !== Math.round(finiteNumber(rightValues[index], 0))) return false
+
+    return true
+  }
+
+  function chordPresetByIntervals(intervals) {
+    var normalizedIntervals = normalizeProtocolIntervalArray(intervals)
+
+    for (var index = 0; index < referenceChordPresets.length; index++) {
+      var preset = referenceChordPresets[index]
+      if (sameIntegerArray(preset.intervalsSemitones, normalizedIntervals)) return preset
+    }
+
+    return null
+  }
+
+  function playbackModeForIntervals(intervals) {
+    var normalizedIntervals = normalizeProtocolIntervalArray(intervals)
+    if (normalizedIntervals.length > 1) return "chord"
+    if (normalizedIntervals.length === 1) return "drone"
+    return "single"
+  }
+
+  function intervalLabelForSemitones(value) {
+    var preset = intervalPresetBySemitones(value)
+    if (preset && preset.semitones === Math.round(finiteNumber(value, 0))) return String(preset.label || "")
+
+    var numeric = Math.round(finiteNumber(value, 0))
+    return numeric > 0 ? (String(numeric) + "st") : ""
+  }
+
+  function intervalListLabel(intervals) {
+    var values = normalizeProtocolIntervalArray(intervals)
+    if (values.length === 0) return ""
+
+    var labels = []
+    for (var index = 0; index < values.length; index++)
+      labels.push(intervalLabelForSemitones(values[index]))
+
+    return labels.join(" + ")
+  }
+
+  function formatReferenceSceneLabel(rootNoteLabel, intervals) {
+    var root = String(rootNoteLabel || "")
+    var normalizedIntervals = normalizeProtocolIntervalArray(intervals)
+    if (root === "" || normalizedIntervals.length === 0) return root
+
+    var chordPreset = normalizedIntervals.length > 1 ? chordPresetByIntervals(normalizedIntervals) : null
+    if (chordPreset && String(chordPreset.label || "") !== "") return root + " " + String(chordPreset.label || "")
+
+    var intervalText = intervalListLabel(intervals)
+    if (root === "" || intervalText === "") return root
+    return root + " + " + intervalText
+  }
+
+  function formatToneVoiceSummary(voices) {
+    if (!Array.isArray(voices) || voices.length === 0) return ""
+
+    var labels = []
+    for (var index = 0; index < voices.length; index++) {
+      var voice = voices[index]
+      if (!voice || typeof voice !== "object") continue
+
+      var noteText = displayNoteLabel(String(voice.note || ""))
+      if (noteText === "") continue
+
+      labels.push(noteText + " " + formatFrequency(voice.frequencyHz) + " Hz")
+    }
+
+    return labels.join(" + ")
+  }
+
+  function normalizeToneVoices(voices, fallbackNote, fallbackFrequencyHz) {
+    var normalized = []
+
+    if (Array.isArray(voices)) {
+      for (var index = 0; index < voices.length; index++) {
+        var voice = voices[index]
+        if (!voice || typeof voice !== "object") continue
+
+        var noteText = String(voice.note || "").trim()
+        if (noteText === "") continue
+
+        normalized.push({
+          note: noteText,
+          frequencyHz: Math.max(0, finiteNumber(voice.frequency_hz, 0)),
+        })
+      }
+    }
+
+    if (normalized.length > 0) return normalized
+
+    var fallback = String(fallbackNote || "").trim()
+    if (fallback === "") return []
+    return [{
+      note: fallback,
+      frequencyHz: Math.max(0, finiteNumber(fallbackFrequencyHz, 0)),
+    }]
   }
 
   function normalizePopupLayoutMode(value) {
@@ -458,6 +683,63 @@ BarWidget {
     setPopupLayoutMode(popupExpanded ? "compact" : "expanded")
   }
 
+  function setReferencePlaybackMode(value) {
+    var next = normalizeReferencePlaybackMode(value)
+    if (next === referencePlaybackMode) return
+
+    referencePlaybackMode = next
+    if (toneActive) playSelectedTone()
+  }
+
+  function cycleReferencePlaybackMode() {
+    var currentIndex = referencePlaybackModes.indexOf(referencePlaybackMode)
+    if (currentIndex < 0) currentIndex = 0
+    setReferencePlaybackMode(referencePlaybackModes[(currentIndex + 1) % referencePlaybackModes.length])
+  }
+
+  function setSelectedReferenceIntervalSemitones(value) {
+    var next = normalizeSelectedReferenceIntervalSemitones(value)
+    if (next === selectedReferenceIntervalSemitones) return
+
+    selectedReferenceIntervalSemitones = next
+    if (toneActive && referencePlaybackMode === "drone") playSelectedTone()
+  }
+
+  function changeSelectedReferenceIntervalPreset(delta) {
+    if (referenceIntervalPresets.length === 0) return
+
+    var step = Math.round(finiteNumber(delta, 0))
+    if (step === 0) return
+
+    var nextIndex = (selectedReferenceIntervalPresetIndex + step) % referenceIntervalPresets.length
+    if (nextIndex < 0) nextIndex += referenceIntervalPresets.length
+    setSelectedReferenceIntervalSemitones(referenceIntervalPresets[nextIndex].semitones)
+  }
+
+  function setSelectedReferenceChordId(value) {
+    var next = normalizeSelectedReferenceChordId(value)
+    if (next === selectedReferenceChordId) return
+
+    selectedReferenceChordId = next
+    if (toneActive && referencePlaybackMode === "chord") playSelectedTone()
+  }
+
+  function changeSelectedReferenceChordPreset(delta) {
+    if (referenceChordPresets.length === 0) return
+
+    var step = Math.round(finiteNumber(delta, 0))
+    if (step === 0) return
+
+    var nextIndex = (selectedReferenceChordPresetIndex + step) % referenceChordPresets.length
+    if (nextIndex < 0) nextIndex += referenceChordPresets.length
+    setSelectedReferenceChordId(referenceChordPresets[nextIndex].id)
+  }
+
+  function changeSelectedReferenceShapePreset(delta) {
+    if (referencePlaybackMode === "chord") changeSelectedReferenceChordPreset(delta)
+    else changeSelectedReferenceIntervalPreset(delta)
+  }
+
   function setHighContrastMode(value) {
     var next = !!value
     if (next === highContrastMode) return
@@ -526,6 +808,8 @@ BarWidget {
   function clearToneState() {
     activeToneNote = ""
     activeToneFrequencyHz = 0
+    activeToneIntervalsSemitones = []
+    activeToneVoices = []
   }
 
   function clearRuntimeError() {
@@ -760,10 +1044,20 @@ BarWidget {
   }
 
   function playSelectedTone() {
-    queueHelperCommand({
+    var command = {
       type: "play_tone",
       note: selectedReferenceCommandNoteLabel,
-    })
+    }
+
+    if (selectedReferenceIntervalsSemitones.length > 0)
+      command.intervals_semitones = selectedReferenceIntervalsSemitones.slice(0)
+
+    queueHelperCommand(command)
+  }
+
+  function toggleSelectedReferenceTone() {
+    if (selectedReferenceToneActive) stopTone()
+    else playSelectedTone()
   }
 
   function playReferenceNoteString(noteText) {
@@ -804,6 +1098,14 @@ BarWidget {
   function selectPitchClass(pitchClassIndex) {
     var numeric = Math.max(0, Math.min(11, Math.round(finiteNumber(pitchClassIndex, selectedReferencePitchClassIndex))))
     if (!setSelectedReferenceMidiNumber((selectedReferenceOctave + 1) * 12 + numeric)) return
+
+    if (toneActive) playSelectedTone()
+  }
+
+  function changeReferenceSemitone(delta) {
+    var next = selectedReferenceMidiNumber + Math.round(finiteNumber(delta, 0))
+    next = Math.max(minimumReferenceMidiNumber, Math.min(maximumReferenceMidiNumber, next))
+    if (!setSelectedReferenceMidiNumber(next)) return
 
     if (toneActive) playSelectedTone()
   }
@@ -885,7 +1187,16 @@ BarWidget {
       helperReadySeen = true
       activeToneNote = String(message.note || selectedReferenceCommandNoteLabel)
       activeToneFrequencyHz = Math.max(0, finiteNumber(message.frequency_hz, 0))
+      activeToneIntervalsSemitones = normalizeProtocolIntervalArray(message.intervals_semitones)
+      activeToneVoices = normalizeToneVoices(message.voices, activeToneNote, activeToneFrequencyHz)
       applySelectedReferenceFromNote(activeToneNote)
+      referencePlaybackMode = playbackModeForIntervals(activeToneIntervalsSemitones)
+      if (referencePlaybackMode === "drone")
+        selectedReferenceIntervalSemitones = normalizeSelectedReferenceIntervalSemitones(activeToneIntervalsSemitones[0])
+      else if (referencePlaybackMode === "chord") {
+        var selectedChordPreset = chordPresetByIntervals(activeToneIntervalsSemitones)
+        if (selectedChordPreset) selectedReferenceChordId = normalizeSelectedReferenceChordId(selectedChordPreset.id)
+      }
       if (isOutputErrorCode(runtimeErrorCode)) clearRuntimeError()
       return
     }
