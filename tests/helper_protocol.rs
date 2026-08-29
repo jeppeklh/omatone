@@ -282,6 +282,76 @@ fn play_and_stop_tone_work_without_real_audio_device_in_mock_mode() {
 }
 
 #[test]
+fn start_and_stop_metronome_work_without_real_audio_device_in_mock_mode() {
+    let output = run_helper_with_input(
+        "{\"type\":\"start_metronome\",\"bpm\":120}\n{\"type\":\"stop_metronome\"}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"metronome_started","bpm":120,"beats_per_bar":4,"beat_unit":4,"subdivision":1}"#.to_owned(),
+            r#"{"type":"metronome_beat","beat_in_bar":1,"beats_per_bar":4,"beat_unit":4,"subdivision_step":1,"subdivision":1,"accented":true}"#
+                .to_owned(),
+            r#"{"type":"metronome_stopped"}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn restarting_metronome_with_a_new_bpm_restarts_on_the_downbeat() {
+    let output = run_helper_with_input(
+        "{\"type\":\"start_metronome\",\"bpm\":120}\n{\"type\":\"start_metronome\",\"bpm\":90}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"metronome_started","bpm":120,"beats_per_bar":4,"beat_unit":4,"subdivision":1}"#.to_owned(),
+            r#"{"type":"metronome_beat","beat_in_bar":1,"beats_per_bar":4,"beat_unit":4,"subdivision_step":1,"subdivision":1,"accented":true}"#
+                .to_owned(),
+            r#"{"type":"metronome_started","bpm":90,"beats_per_bar":4,"beat_unit":4,"subdivision":1}"#.to_owned(),
+            r#"{"type":"metronome_beat","beat_in_bar":1,"beats_per_bar":4,"beat_unit":4,"subdivision_step":1,"subdivision":1,"accented":true}"#
+                .to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn metronome_start_can_echo_extended_meter_and_subdivision_state() {
+    let output = run_helper_with_input(
+        "{\"type\":\"start_metronome\",\"bpm\":96,\"beats_per_bar\":6,\"beat_unit\":8,\"subdivision\":3}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"metronome_started","bpm":96,"beats_per_bar":6,"beat_unit":8,"subdivision":3}"#.to_owned(),
+            r#"{"type":"metronome_beat","beat_in_bar":1,"beats_per_bar":6,"beat_unit":8,"subdivision_step":1,"subdivision":3,"accented":true}"#
+                .to_owned(),
+        ]
+    );
+}
+
+#[test]
 fn interval_playback_reports_root_and_all_generated_voices() {
     let output = run_helper_with_input(
         "{\"type\":\"play_tone\",\"note\":\"A4\",\"intervals_semitones\":[12]}\n",
@@ -344,7 +414,7 @@ fn runtime_output_failure_is_reported_without_crashing_helper() {
 #[test]
 fn invalid_commands_do_not_crash_or_block_later_valid_commands() {
     let output = run_helper_with_input(
-        "[]\n{\"type\":1}\n{\"type\":\"play_tone\",\"note\":\"H2\"}\n{\"type\":\"set_reference_a\",\"frequency_hz\":399.0}\n{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"stop_tone\"}\n",
+        "[]\n{\"type\":1}\n{\"type\":\"play_tone\",\"note\":\"H2\"}\n{\"type\":\"set_reference_a\",\"frequency_hz\":399.0}\n{\"type\":\"start_metronome\",\"bpm\":301}\n{\"type\":\"start_metronome\",\"bpm\":120,\"beats_per_bar\":5,\"beat_unit\":4}\n{\"type\":\"start_metronome\",\"bpm\":120,\"subdivision\":5}\n{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"stop_tone\"}\n",
         Some("idle"),
         Some("ok"),
         &[],
@@ -360,6 +430,9 @@ fn invalid_commands_do_not_crash_or_block_later_valid_commands() {
             r#"{"type":"error","code":"invalid_command","message":"invalid command: missing string field 'type'"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_note","message":"invalid note: invalid note letter 'H'"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_reference_frequency","message":"invalid reference A frequency: reference A frequency must be within 400.0..=480.0 Hz"}"#.to_owned(),
+            r#"{"type":"error","code":"invalid_metronome_bpm","message":"invalid metronome BPM: metronome BPM must be within 20..=300"}"#.to_owned(),
+            r#"{"type":"error","code":"invalid_metronome_meter","message":"invalid metronome meter: supported metronome meters are 2/4, 3/4, 4/4, and 6/8"}"#.to_owned(),
+            r#"{"type":"error","code":"invalid_metronome_subdivision","message":"invalid metronome subdivision: metronome subdivision must be within 1..=4"}"#.to_owned(),
             r#"{"type":"tone_started","note":"A4","frequency_hz":440.0}"#.to_owned(),
             r#"{"type":"tone_stopped"}"#.to_owned(),
         ]

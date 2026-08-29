@@ -24,6 +24,7 @@ Owns:
 -   tuner activation/deactivation;
 -   user interaction for note selection and guitar shortcuts;
 -   persisted calibration, spelling, and tuning-preset preferences;
+-   persisted metronome BPM, meter, and subdivision preferences;
 -   persisted popup-layout and display-accessibility preferences;
 -   helper process lifecycle from the UI side;
 -   visual smoothing that does not change pitch correctness;
@@ -35,10 +36,13 @@ Owns:
 
 -   microphone capture;
 -   reference-tone audio output;
+-   shared output scheduling and mixing for sustained tones and timed
+    metronome click pulses;
+-   metronome timing, beat-accent scheduling, and subdivision pulses;
 -   pitch detection and confidence estimation;
 -   note parsing, normalization, and note/frequency math;
- -   validated helper-side reference A configuration;
- -   silence and weak-signal rejection;
+-   validated helper-side reference A configuration;
+-   silence and weak-signal rejection;
 -   helper protocol I/O;
 -   audio-related error handling.
 
@@ -73,6 +77,13 @@ Output path:
     startup and can also receive additive runtime updates over the
     protocol.
 -   Reference-tone playback must not block microphone analysis.
+-   One persistent output worker owns all synthesized playback lanes.
+    Reference-tone commands update only the sustained-tone lane; the
+    Phase 6C metronome lane shares that same worker and stream rather
+    than opening a second output path.
+-   Output-lane changes must be immediate and role-scoped. Stopping or
+    retuning a reference tone must not imply stopping microphone capture
+    or any future timed-pulse lane.
 -   Expensive DSP work must not run on the QML UI thread.
 
 The UI may smooth meter motion, but pitch estimation and any smoothing
@@ -129,6 +140,12 @@ state. It only needs the externally relevant ones defined in
 -   Opening the popup starts the helper when the tuner is currently off;
     closing the popup does not implicitly stop the helper.
 -   Start reference tones with a sine wave plus a short amplitude ramp.
+-   Reserve shared-output ownership for one sustained-tone lane plus a
+    timed-pulse lane so metronome clicks can coexist without a second
+    scheduler or device session.
+-   For the current metronome slice, keep the rhythm model bounded to
+    common preset meters (`2/4`, `3/4`, `4/4`, `6/8`), an accented beat
+    one, whole-number BPM, and `1x` through `4x` subdivisions.
 -   Prefer a simple, documented helper/UI protocol over tighter coupling.
 -   Favor low latency over unnecessary numerical precision.
 

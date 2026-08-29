@@ -1,4 +1,8 @@
 use crate::config::validate_reference_a_hz;
+use crate::metronome::{
+    validate_metronome_bpm, MetronomeState, MetronomeStateError, DEFAULT_METRONOME_BEATS_PER_BAR,
+    DEFAULT_METRONOME_BEAT_UNIT, DEFAULT_METRONOME_SUBDIVISION,
+};
 use crate::note::Note;
 use crate::reference_tone::ReferenceToneScene;
 use serde::Serialize;
@@ -10,6 +14,8 @@ pub enum Command {
     PlayTone { scene: ReferenceToneScene },
     SetReferenceA { frequency_hz: f64 },
     StopTone,
+    StartMetronome { state: MetronomeState },
+    StopMetronome,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -28,6 +34,9 @@ pub enum ErrorCode {
     UnsupportedFormat,
     InvalidNote,
     InvalidReferenceFrequency,
+    InvalidMetronomeBpm,
+    InvalidMetronomeMeter,
+    InvalidMetronomeSubdivision,
     InvalidCommand,
     InternalError,
 }
@@ -53,6 +62,21 @@ pub enum UiMessage {
         voices: Vec<ToneVoice>,
     },
     ToneStopped,
+    MetronomeStarted {
+        bpm: u16,
+        beats_per_bar: u8,
+        beat_unit: u8,
+        subdivision: u8,
+    },
+    MetronomeBeat {
+        beat_in_bar: u8,
+        beats_per_bar: u8,
+        beat_unit: u8,
+        subdivision_step: u8,
+        subdivision: u8,
+        accented: bool,
+    },
+    MetronomeStopped,
     Error {
         code: ErrorCode,
         message: String,
@@ -71,6 +95,9 @@ pub enum CommandParseError {
     InvalidCommand(String),
     InvalidNote(String),
     InvalidReferenceFrequency(String),
+    InvalidMetronomeBpm(String),
+    InvalidMetronomeMeter(String),
+    InvalidMetronomeSubdivision(String),
 }
 
 impl CommandParseError {
@@ -78,6 +105,11 @@ impl CommandParseError {
         match self {
             CommandParseError::InvalidNote(_) => ErrorCode::InvalidNote,
             CommandParseError::InvalidReferenceFrequency(_) => ErrorCode::InvalidReferenceFrequency,
+            CommandParseError::InvalidMetronomeBpm(_) => ErrorCode::InvalidMetronomeBpm,
+            CommandParseError::InvalidMetronomeMeter(_) => ErrorCode::InvalidMetronomeMeter,
+            CommandParseError::InvalidMetronomeSubdivision(_) => {
+                ErrorCode::InvalidMetronomeSubdivision
+            }
             CommandParseError::MalformedJson(_) | CommandParseError::InvalidCommand(_) => {
                 ErrorCode::InvalidCommand
             }
@@ -95,11 +127,22 @@ impl CommandParseError {
 impl fmt::Display for CommandParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CommandParseError::MalformedJson(error) => write!(f, "malformed command JSON: {error}"),
+            CommandParseError::MalformedJson(error) => {
+                write!(f, "malformed command JSON: {error}")
+            }
             CommandParseError::InvalidCommand(error) => write!(f, "invalid command: {error}"),
             CommandParseError::InvalidNote(error) => write!(f, "invalid note: {error}"),
             CommandParseError::InvalidReferenceFrequency(error) => {
                 write!(f, "invalid reference A frequency: {error}")
+            }
+            CommandParseError::InvalidMetronomeBpm(error) => {
+                write!(f, "invalid metronome BPM: {error}")
+            }
+            CommandParseError::InvalidMetronomeMeter(error) => {
+                write!(f, "invalid metronome meter: {error}")
+            }
+            CommandParseError::InvalidMetronomeSubdivision(error) => {
+                write!(f, "invalid metronome subdivision: {error}")
             }
         }
     }
@@ -122,6 +165,8 @@ pub fn parse_command(input: &str) -> Result<Command, CommandParseError> {
         "play_tone" => parse_play_tone(object),
         "set_reference_a" => parse_set_reference_a(object),
         "stop_tone" => Ok(Command::StopTone),
+        "start_metronome" => parse_start_metronome(object),
+        "stop_metronome" => Ok(Command::StopMetronome),
         other => Err(CommandParseError::InvalidCommand(format!(
             "unknown command type '{other}'"
         ))),
@@ -187,9 +232,88 @@ fn parse_set_reference_a(object: &Map<String, Value>) -> Result<Command, Command
     Ok(Command::SetReferenceA { frequency_hz })
 }
 
+fn parse_start_metronome(object: &Map<String, Value>) -> Result<Command, CommandParseError> {
+    let bpm = object.get("bpm").and_then(Value::as_u64).ok_or_else(|| {
+        CommandParseError::InvalidCommand("start_metronome requires integer field 'bpm'".to_owned())
+    })?;
+
+    let bpm = u16::try_from(bpm).map_err(|_| {
+        CommandParseError::InvalidMetronomeBpm(format!(
+            "metronome BPM must be within {}..={}",
+            crate::metronome::MIN_METRONOME_BPM,
+            crate::metronome::MAX_METRONOME_BPM
+        ))
+    })?;
+    let bpm = validate_metronome_bpm(bpm)
+        .map_err(|error| CommandParseError::InvalidMetronomeBpm(error.to_string()))?;
+
+    let beats_per_bar = parse_optional_u8_field(
+        object,
+        "start_metronome",
+        "beats_per_bar",
+        DEFAULT_METRONOME_BEATS_PER_BAR,
+    )?;
+    let beat_unit = parse_optional_u8_field(
+        object,
+        "start_metronome",
+        "beat_unit",
+        DEFAULT_METRONOME_BEAT_UNIT,
+    )?;
+    let subdivision = parse_optional_u8_field(
+        object,
+        "start_metronome",
+        "subdivision",
+        DEFAULT_METRONOME_SUBDIVISION,
+    )?;
+    let state = MetronomeState::new(bpm, beats_per_bar, beat_unit, subdivision)
+        .map_err(map_metronome_state_error)?;
+
+    Ok(Command::StartMetronome { state })
+}
+
+fn parse_optional_u8_field(
+    object: &Map<String, Value>,
+    command_name: &str,
+    field_name: &str,
+    default_value: u8,
+) -> Result<u8, CommandParseError> {
+    let Some(value) = object.get(field_name) else {
+        return Ok(default_value);
+    };
+
+    let value = value.as_u64().ok_or_else(|| {
+        CommandParseError::InvalidCommand(format!(
+            "{command_name} field '{field_name}' must be an integer"
+        ))
+    })?;
+
+    u8::try_from(value).map_err(|_| {
+        CommandParseError::InvalidCommand(format!(
+            "{command_name} field '{field_name}' must be within 0..=255"
+        ))
+    })
+}
+
+fn map_metronome_state_error(error: MetronomeStateError) -> CommandParseError {
+    match error {
+        MetronomeStateError::InvalidBpm(error) => {
+            CommandParseError::InvalidMetronomeBpm(error.to_string())
+        }
+        MetronomeStateError::InvalidMeter(error) => {
+            CommandParseError::InvalidMetronomeMeter(error.to_string())
+        }
+        MetronomeStateError::InvalidSubdivision(error) => {
+            CommandParseError::InvalidMetronomeSubdivision(error.to_string())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_command, Command, CommandParseError, ErrorCode, ToneVoice, UiMessage};
+    use crate::metronome::{
+        MetronomeState, DEFAULT_METRONOME_BEATS_PER_BAR, DEFAULT_METRONOME_BEAT_UNIT,
+    };
     use crate::reference_tone::ReferenceToneScene;
 
     #[test]
@@ -221,6 +345,35 @@ mod tests {
         assert_eq!(
             parse_command(r#"{"type":"stop_tone"}"#).unwrap(),
             Command::StopTone
+        );
+    }
+
+    #[test]
+    fn parses_metronome_start_and_stop_commands() {
+        assert_eq!(
+            parse_command(r#"{"type":"start_metronome","bpm":120}"#).unwrap(),
+            Command::StartMetronome {
+                state: MetronomeState::new(
+                    120,
+                    DEFAULT_METRONOME_BEATS_PER_BAR,
+                    DEFAULT_METRONOME_BEAT_UNIT,
+                    1
+                )
+                .unwrap(),
+            }
+        );
+        assert_eq!(
+            parse_command(
+                r#"{"type":"start_metronome","bpm":90,"beats_per_bar":6,"beat_unit":8,"subdivision":3}"#
+            )
+            .unwrap(),
+            Command::StartMetronome {
+                state: MetronomeState::new(90, 6, 8, 3).unwrap(),
+            }
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"stop_metronome"}"#).unwrap(),
+            Command::StopMetronome
         );
     }
 
@@ -292,6 +445,39 @@ mod tests {
                 "reference A frequency must be within 400.0..=480.0 Hz".to_owned()
             )
         );
+        assert_eq!(
+            parse_command(r#"{"type":"start_metronome"}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "start_metronome requires integer field 'bpm'".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"start_metronome","bpm":120.5}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "start_metronome requires integer field 'bpm'".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"start_metronome","bpm":301}"#).unwrap_err(),
+            CommandParseError::InvalidMetronomeBpm(
+                "metronome BPM must be within 20..=300".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(
+                r#"{"type":"start_metronome","bpm":120,"beats_per_bar":5,"beat_unit":4}"#
+            )
+            .unwrap_err(),
+            CommandParseError::InvalidMetronomeMeter(
+                "supported metronome meters are 2/4, 3/4, 4/4, and 6/8".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"start_metronome","bpm":120,"subdivision":5}"#).unwrap_err(),
+            CommandParseError::InvalidMetronomeSubdivision(
+                "metronome subdivision must be within 1..=4".to_owned()
+            )
+        );
     }
 
     #[test]
@@ -332,6 +518,34 @@ mod tests {
             r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}"#
         );
         assert_eq!(
+            UiMessage::MetronomeStarted {
+                bpm: 120,
+                beats_per_bar: 6,
+                beat_unit: 8,
+                subdivision: 3,
+            }
+            .to_json_line()
+            .unwrap(),
+            r#"{"type":"metronome_started","bpm":120,"beats_per_bar":6,"beat_unit":8,"subdivision":3}"#
+        );
+        assert_eq!(
+            UiMessage::MetronomeBeat {
+                beat_in_bar: 1,
+                beats_per_bar: 6,
+                beat_unit: 8,
+                subdivision_step: 2,
+                subdivision: 3,
+                accented: false,
+            }
+            .to_json_line()
+            .unwrap(),
+            r#"{"type":"metronome_beat","beat_in_bar":1,"beats_per_bar":6,"beat_unit":8,"subdivision_step":2,"subdivision":3,"accented":false}"#
+        );
+        assert_eq!(
+            UiMessage::MetronomeStopped.to_json_line().unwrap(),
+            r#"{"type":"metronome_stopped"}"#
+        );
+        assert_eq!(
             CommandParseError::InvalidCommand("missing string field 'type'".to_owned())
                 .into_message()
                 .to_json_line()
@@ -353,6 +567,18 @@ mod tests {
         assert_eq!(
             CommandParseError::InvalidReferenceFrequency("bad".to_owned()).code(),
             ErrorCode::InvalidReferenceFrequency
+        );
+        assert_eq!(
+            CommandParseError::InvalidMetronomeBpm("bad".to_owned()).code(),
+            ErrorCode::InvalidMetronomeBpm
+        );
+        assert_eq!(
+            CommandParseError::InvalidMetronomeMeter("bad".to_owned()).code(),
+            ErrorCode::InvalidMetronomeMeter
+        );
+        assert_eq!(
+            CommandParseError::InvalidMetronomeSubdivision("bad".to_owned()).code(),
+            ErrorCode::InvalidMetronomeSubdivision
         );
     }
 }

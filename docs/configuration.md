@@ -29,6 +29,10 @@ For a bar widget instance, the entry shape is:
   "noteSpelling": "sharps",
   "selectedPresetId": "guitar.standard",
   "selectedReferenceNote": "A4",
+  "metronomeBpm": 100,
+  "metronomeBeatsPerBar": 4,
+  "metronomeBeatUnit": 4,
+  "metronomeSubdivision": 1,
   "popupLayoutMode": "compact",
   "highContrastMode": false,
   "reducedMotionMode": false
@@ -46,6 +50,10 @@ settings file.
 -   `noteSpelling`: `"sharps"` or `"flats"`.
 -   `selectedPresetId`: built-in tuning preset identifier.
 -   `selectedReferenceNote`: last selected chromatic reference note.
+-   `metronomeBpm`: last selected whole-number metronome tempo.
+-   `metronomeBeatsPerBar`: last selected metronome meter numerator.
+-   `metronomeBeatUnit`: last selected metronome meter denominator.
+-   `metronomeSubdivision`: last selected per-beat subdivision count.
 -   `popupLayoutMode`: `"compact"` or `"expanded"`.
 -   `highContrastMode`: boolean display-preference flag.
 -   `reducedMotionMode`: boolean display-preference flag.
@@ -61,12 +69,16 @@ When no persisted configuration exists, Omatune uses:
 -   `noteSpelling = "sharps"`
 -   `selectedPresetId = "guitar.standard"`
 -   `selectedReferenceNote = "A4"`
+-   `metronomeBpm = 100`
+-   `metronomeBeatsPerBar = 4`
+-   `metronomeBeatUnit = 4`
+-   `metronomeSubdivision = 1`
 -   `popupLayoutMode = "compact"`
 -   `highContrastMode = false`
 -   `reducedMotionMode = false`
 
 The helper does not persist live runtime state such as whether the tuner
-is currently on or whether a tone is actively playing.
+is currently on or whether a tone or metronome is actively playing.
 
 ## Validation Rules
 
@@ -82,6 +94,18 @@ plugin build.
 
 `selectedReferenceNote` must parse as a supported chromatic note in the
 range `C0` through `B8` after canonicalization.
+
+`metronomeBpm` must be an integer within `20..=300`.
+
+`metronomeBeatsPerBar` and `metronomeBeatUnit` must resolve to one of
+the supported metronome presets:
+
+-   `2/4`
+-   `3/4`
+-   `4/4`
+-   `6/8`
+
+`metronomeSubdivision` must be an integer within `1..=4`.
 
 `popupLayoutMode` must be one of:
 
@@ -102,9 +126,9 @@ The persisted `referenceAHz` value is applied in two places:
 -   helper runtime, via the additive `set_reference_a` protocol command,
     so live calibration changes also retune an active reference tone.
 
-Preset selection, note-spelling preference, popup layout, and display
-accessibility preferences remain UI-owned state. They do not fork the
-underlying chromatic pitch model.
+Preset selection, note-spelling preference, metronome BPM, meter,
+subdivision, popup layout, and display accessibility preferences remain
+UI-owned state. They do not fork the underlying chromatic pitch model.
 
 ## Migration Rules
 
@@ -118,6 +142,10 @@ Migration behavior is therefore:
 -   missing `configVersion` is treated as pre-v1 schema;
 -   invalid individual fields are replaced with defaults for that field;
 -   unrelated unknown keys are preserved on the next write.
+
+This same additive rule covers the later metronome rhythm fields:
+earlier saved widget entries simply fall back to the defaults of
+`100 BPM`, `4/4`, and `1x` subdivision.
 
 ### Future schema changes
 

@@ -16,6 +16,10 @@ The plugin also provides reference-tone playback. A user can select a
 note and hear its exact reference pitch for tuning by ear, either alone,
 as a drone interval, or with a small fixed chord shape.
 
+The current optional practice-tool slice also includes a small
+metronome with whole-number BPM, tap tempo, common meters,
+subdivisions, and a beat-one accent.
+
 ## Documentation
 
 -   `docs/architecture.md`: implementation-facing ownership and runtime
@@ -45,10 +49,13 @@ as a drone interval, or with a small fixed chord shape.
 -   Microphone activation/deactivation
 -   Single-note, drone-interval, and simple chord reference-tone
     playback
+-   Metronome playback with start/stop, adjustable BPM, tap tempo,
+    common meters, subdivisions, beat-one accent, and compact beat
+    indication
 -   Arbitrary note selection for reference tones
 -   Adjustable A4 reference frequency in the supported calibration range
--   Persisted reference note, tuning preset, and sharp/flat spelling
-    preference
+-   Persisted reference note, metronome tempo/meter/subdivision, tuning
+    preset, and sharp/flat spelling preference
 -   Built-in guitar, bass, ukulele, and violin-family tuning presets
 -   Sensible behavior for silence, weak input, invalid pitch estimates,
     and audio errors
@@ -131,6 +138,7 @@ The project has two primary responsibilities.
 -   Displays detected note, frequency, cents offset, and tuner
     indicator.
 -   Lets the user select and start/stop reference tones.
+-   Lets the user control a small metronome from the popup.
 -   Provides fast guitar-note shortcuts.
 -   Smooths visual movement where appropriate.
 
@@ -141,6 +149,7 @@ The project has two primary responsibilities.
 -   Converts frequency to the nearest equal-tempered note and cents
     deviation.
 -   Generates reference tones mathematically.
+-   Generates metronome clicks mathematically on the shared output path.
 -   Sends reference audio through the Linux audio output stack.
 -   Streams state and pitch updates to the UI.
 -   Does not own presentation.

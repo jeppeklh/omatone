@@ -134,6 +134,30 @@ fn handle_command(
             Ok(()) => protocol_writer.write_message(&UiMessage::ToneStopped)?,
             Err(error) => emit_control_error(protocol_writer, error)?,
         },
+        Command::StartMetronome { state } => match audio_output.start_metronome(state) {
+            Ok(state) => {
+                protocol_writer.write_message(&UiMessage::MetronomeStarted {
+                    bpm: state.bpm,
+                    beats_per_bar: state.beats_per_bar,
+                    beat_unit: state.beat_unit,
+                    subdivision: state.subdivision,
+                })?;
+                let downbeat = state.downbeat();
+                protocol_writer.write_message(&UiMessage::MetronomeBeat {
+                    beat_in_bar: downbeat.beat_in_bar,
+                    beats_per_bar: downbeat.beats_per_bar,
+                    beat_unit: downbeat.beat_unit,
+                    subdivision_step: downbeat.subdivision_step,
+                    subdivision: downbeat.subdivision,
+                    accented: downbeat.accented,
+                })?
+            }
+            Err(error) => emit_control_error(protocol_writer, error)?,
+        },
+        Command::StopMetronome => match audio_output.stop_metronome() {
+            Ok(()) => protocol_writer.write_message(&UiMessage::MetronomeStopped)?,
+            Err(error) => emit_control_error(protocol_writer, error)?,
+        },
     }
 
     Ok(())

@@ -135,6 +135,42 @@ FocusScope {
   }
 
   Shortcut {
+    sequence: "M"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.toggleMetronome()
+  }
+
+  Shortcut {
+    sequence: "Shift+M"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.tapMetronomeTempo()
+  }
+
+  Shortcut {
+    sequence: "Ctrl+M"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.changeMetronomeMeter(1)
+  }
+
+  Shortcut {
+    sequence: "Alt+M"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.changeMetronomeSubdivision(1)
+  }
+
+  Shortcut {
+    sequence: "Shift+Left"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.changeMetronomeBpm(-1)
+  }
+
+  Shortcut {
+    sequence: "Shift+Right"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.changeMetronomeBpm(1)
+  }
+
+  Shortcut {
     sequence: "1"
     enabled: root.opened && !!root.hostWidget && root.hostWidget.selectedPresetNotes.length >= 1
     onActivated: root.hostWidget.playPresetNoteAt(0)
@@ -266,7 +302,7 @@ FocusScope {
             ? Util.alpha(Color.urgent, root.highContrast ? 0.18 : 0.10)
             : (root.hostWidget && root.hostWidget.inTune
               ? Util.alpha(Color.accent, root.highContrast ? 0.22 : 0.16)
-              : (root.hostWidget && root.hostWidget.toneActive
+              : (root.hostWidget && (root.hostWidget.toneActive || root.hostWidget.metronomeActive)
                 ? Util.alpha(Color.accent, root.highContrast ? 0.12 : 0.08)
                 : Util.alpha(root.foreground, root.highContrast ? 0.12 : 0.06)))
           border.width: root.highContrast ? Math.max(2, Style.normalBorderWidth) : Math.max(1, Style.normalBorderWidth)
@@ -292,7 +328,7 @@ FocusScope {
               text: root.hostWidget ? root.hostWidget.stateBadgeText : ""
               color: root.hostWidget && root.hostWidget.hasAlert
                 ? Color.urgent
-                : (root.hostWidget && (root.hostWidget.inTune || root.hostWidget.toneActive)
+                : (root.hostWidget && (root.hostWidget.inTune || root.hostWidget.toneActive || root.hostWidget.metronomeActive)
                   ? Color.accent
                   : root.foreground)
               font.family: root.fontFamily
@@ -307,7 +343,7 @@ FocusScope {
               text: root.hostWidget ? root.hostWidget.readoutTitleText : "--"
               color: root.hostWidget && root.hostWidget.hasAlert
                 ? Color.urgent
-                : (root.hostWidget && (root.hostWidget.inTune || root.hostWidget.toneActive)
+                : (root.hostWidget && (root.hostWidget.inTune || root.hostWidget.toneActive || root.hostWidget.metronomeActive)
                   ? Color.accent
                   : root.foreground)
               font.family: root.fontFamily
@@ -814,6 +850,243 @@ FocusScope {
             fontSize: Style.font.bodySmall
             focusable: true
             onClicked: if (root.hostWidget) root.hostWidget.toggleSelectedReferenceTone()
+          }
+        }
+
+        PanelSeparator {
+          foreground: root.foreground
+        }
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: "Metronome"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          font.bold: true
+        }
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: root.hostWidget ? root.hostWidget.metronomeHintText : ""
+          color: root.quietTextColor
+          opacity: root.secondaryTextOpacity
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Repeater {
+            model: root.hostWidget ? root.hostWidget.metronomeBeatsPerBar : 4
+
+            Rectangle {
+              required property int index
+
+              width: index === 0 ? Style.space(28) : Style.space(22)
+              height: Style.space(22)
+              radius: Style.cornerRadius
+              color: root.hostWidget && root.hostWidget.metronomeBeatInBar === index + 1
+                ? Util.alpha(Color.accent, root.highContrast ? 0.34 : 0.22)
+                : Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.06)
+              border.width: root.highContrast ? 1 : 0
+              border.color: root.hostWidget && root.hostWidget.metronomeBeatInBar === index + 1
+                ? Util.alpha(Color.accent, root.highContrast ? 0.92 : 0.62)
+                : Util.alpha(root.foreground, root.highContrast ? 0.44 : 0.22)
+
+              Text {
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: String(index + 1)
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: index === 0 || (root.hostWidget ? root.hostWidget.metronomeBeatInBar === index + 1 : false)
+              }
+            }
+          }
+        }
+
+        Row {
+          width: parent.width
+          visible: root.hostWidget ? root.hostWidget.metronomeSubdivision > 1 : false
+          spacing: Style.space(6)
+
+          Repeater {
+            model: root.hostWidget ? root.hostWidget.metronomeSubdivision : 1
+
+            Rectangle {
+              required property int index
+
+              width: Style.space(18)
+              height: Style.space(10)
+              radius: height / 2
+              color: root.hostWidget && root.hostWidget.metronomeSubdivisionStep === index + 1
+                ? Util.alpha(Color.accent, root.highContrast ? 0.34 : 0.22)
+                : Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.06)
+              border.width: root.highContrast ? 1 : 0
+              border.color: root.hostWidget && root.hostWidget.metronomeSubdivisionStep === index + 1
+                ? Util.alpha(Color.accent, root.highContrast ? 0.92 : 0.62)
+                : Util.alpha(root.foreground, root.highContrast ? 0.44 : 0.22)
+            }
+          }
+        }
+
+        Flow {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Button {
+            text: "-1"
+            width: Style.space(64)
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            focusable: true
+            onClicked: if (root.hostWidget) root.hostWidget.changeMetronomeBpm(-1)
+          }
+
+          Button {
+            text: root.hostWidget ? (root.hostWidget.metronomeBpm + " BPM") : "100 BPM"
+            width: Math.max(Style.space(90), implicitWidth)
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            focusable: true
+            onClicked: if (root.hostWidget) root.hostWidget.resetMetronomeBpm()
+          }
+
+          Button {
+            text: "+1"
+            width: Style.space(64)
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            focusable: true
+            onClicked: if (root.hostWidget) root.hostWidget.changeMetronomeBpm(1)
+          }
+
+          Button {
+            text: "Tap"
+            width: Math.max(Style.space(70), implicitWidth)
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            focusable: true
+            onClicked: if (root.hostWidget) root.hostWidget.tapMetronomeTempo()
+          }
+
+          Button {
+            text: root.hostWidget && root.hostWidget.metronomeActive ? "Stop" : "Start"
+            width: Math.max(Style.space(84), implicitWidth)
+            selected: root.hostWidget ? root.hostWidget.metronomeActive : false
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            focusable: true
+            onClicked: if (root.hostWidget) root.hostWidget.toggleMetronome()
+          }
+        }
+
+        Item {
+          visible: root.expandedLayout
+          width: parent.width
+          height: visible ? metronomeControlsColumn.implicitHeight : 0
+
+          Column {
+            id: metronomeControlsColumn
+            width: parent.width
+            spacing: Style.space(8)
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Meter"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.metronomeMeterPresets : []
+
+                Button {
+                  required property var modelData
+
+                  text: String(modelData.label || "")
+                  selected: root.hostWidget
+                    ? (root.hostWidget.metronomeBeatsPerBar === Number(modelData.beatsPerBar)
+                      && root.hostWidget.metronomeBeatUnit === Number(modelData.beatUnit))
+                    : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(7)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.setMetronomeMeter(Number(modelData.beatsPerBar), Number(modelData.beatUnit))
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Subdivision"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.metronomeSubdivisionPresets : []
+
+                Button {
+                  required property var modelData
+
+                  text: String(modelData.label || "")
+                  selected: root.hostWidget ? root.hostWidget.metronomeSubdivision === Number(modelData.steps) : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(7)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.setMetronomeSubdivision(Number(modelData.steps))
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Tap sets tempo from your last few hits. Meter and subdivision restart on beat one when changed live."
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
           }
         }
 

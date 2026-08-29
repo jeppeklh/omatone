@@ -12,7 +12,7 @@ For runtime ownership and lifecycle boundaries, see
 The helper performs both directions of audio work:
 
 -   microphone input for pitch detection;
--   audio output for synthesized reference tones.
+-   audio output for synthesized reference tones and metronome clicks.
 
 The protocol is intentionally small so the audio implementation and UI
 can evolve independently.
@@ -147,11 +147,75 @@ example, `A4` major is rooted at `A4` with
 The current helper opens audio output lazily when a tone is first
 requested, rather than during initial startup.
 
+Phase 6A establishes the shared-output ownership contract behind this
+message without changing its wire shape yet:
+
+-   one helper output worker owns all synthesized playback;
+-   `tone_started` and `tone_stopped` remain scoped to the sustained
+    reference-tone lane;
+-   future metronome clicks must be mixed into that same worker and
+    stream rather than opening a second output session;
+-   role-specific output commands must not implicitly stop microphone
+    capture or unrelated output lanes.
+
 ### Tone Stopped
 
 Confirms that reference-tone playback has stopped.
 
     {"type":"tone_stopped"}
+
+### Metronome Started
+
+Confirms that metronome playback has started or been replaced.
+
+    {
+      "type": "metronome_started",
+      "bpm": 120,
+      "beats_per_bar": 4,
+      "beat_unit": 4,
+      "subdivision": 1
+    }
+
+Phase 6B kept the first shippable metronome slice intentionally small.
+Phase 6C extends that same command surface additively:
+
+-   `bpm` is the active whole-number tempo;
+-   `beats_per_bar` and `beat_unit` identify the active meter;
+-   the current helper accepts only `2/4`, `3/4`, `4/4`, and `6/8`;
+-   `subdivision` is the active per-beat pulse count in `1..=4`;
+-   a matching immediate downbeat is emitted as a `metronome_beat`
+    message right after `metronome_started`.
+
+### Metronome Beat
+
+Emitted for each audible metronome beat.
+
+    {
+      "type": "metronome_beat",
+      "beat_in_bar": 1,
+      "beats_per_bar": 4,
+      "beat_unit": 4,
+      "subdivision_step": 1,
+      "subdivision": 1,
+      "accented": true
+    }
+
+Rules:
+
+-   `beat_in_bar` is `1`-based;
+-   `beats_per_bar` and `beat_unit` echo the active meter;
+-   `subdivision_step` is `1`-based inside the current beat;
+-   `subdivision` is the active per-beat pulse count;
+-   `accented` is `true` only on beat one, subdivision step one;
+-   the current helper emits the initial downbeat immediately on start,
+    then emits later beat and subdivision messages from the shared output
+    worker as the timed click lane advances.
+
+### Metronome Stopped
+
+Confirms that metronome playback has stopped.
+
+    {"type":"metronome_stopped"}
 
 ### Error
 
@@ -173,6 +237,9 @@ Possible initial codes:
 -   `unsupported_format`
 -   `invalid_note`
 -   `invalid_reference_frequency`
+-   `invalid_metronome_bpm`
+-   `invalid_metronome_meter`
+-   `invalid_metronome_subdivision`
 -   `invalid_command`
 -   `internal_error`
 
@@ -253,6 +320,11 @@ The helper emits canonical note names using sharps:
 If a tone is already playing, `play_tone` replaces it without requiring
 a separate stop command.
 
+Phase 6A also fixes the runtime ownership rule for future shared output:
+`play_tone` replaces only the sustained reference-tone lane. It must not
+be defined later as a global "stop everything else on the speakers"
+command.
+
 The current QML UI uses the same command for both additive playback
 workflows:
 
@@ -267,6 +339,10 @@ workflows:
     {"type":"stop_tone"}
 
 Stops current reference-tone playback.
+
+Phase 6A keeps `stop_tone` scoped the same way: it stops only the
+reference-tone lane. It does not imply stopping input capture or any
+later timed metronome lane that shares the output worker.
 
 ### Set Reference A
 
@@ -297,6 +373,56 @@ Example:
       "type": "set_reference_a",
       "frequency_hz": 442.0
     }
+
+### Start Metronome
+
+Starts metronome playback.
+
+    {
+      "type": "start_metronome",
+      "bpm": 120
+    }
+
+Extended Phase 6C example:
+
+    {
+      "type": "start_metronome",
+      "bpm": 96,
+      "beats_per_bar": 6,
+      "beat_unit": 8,
+      "subdivision": 3
+    }
+
+Rules:
+
+-   `bpm` must be an integer;
+-   `bpm` must be within `20..=300`;
+-   `beats_per_bar` is optional and defaults to `4`;
+-   `beat_unit` is optional and defaults to `4`;
+-   `beats_per_bar` and `beat_unit`, together, must be one of the
+    supported meters: `2/4`, `3/4`, `4/4`, or `6/8`;
+-   `subdivision` is optional, defaults to `1`, and must be within
+    `1..=4`;
+-   repeated `start_metronome` commands replace the active metronome
+    tempo and restart the bar on beat one;
+-   `start_metronome` controls only the timed metronome lane and must not
+    stop microphone capture or the sustained reference-tone lane.
+
+Phase 6C keeps the rhythm model deliberately bounded:
+
+-   one accent on beat one only;
+-   one fixed set of common meters rather than arbitrary meter editing;
+-   one evenly divided subdivision count per beat rather than patterns or
+    sequencing.
+
+### Stop Metronome
+
+Stops current metronome playback.
+
+    {"type":"stop_metronome"}
+
+Like `stop_tone`, this remains role-scoped: it stops only the metronome
+lane inside the shared output worker.
 
 ## Guitar Shortcuts
 
@@ -342,6 +468,25 @@ that affects correctness belong in Rust.
 Tone start/stop commands should be acted upon promptly. Use a short
 amplitude ramp when starting, stopping, or changing tones to reduce
 audible clicks.
+
+Phase 6A shared scheduling rules:
+
+-   microphone capture remains independent from synthesized output;
+-   all synthesized audio shares one helper-owned output stream and
+    scheduler;
+-   continuous tones and future timed clicks may overlap and are mixed in
+    that worker;
+-   output failures clear synthesized playback state, but they do not by
+    themselves redefine the input-side protocol contract.
+
+The current Phase 6C metronome adds one bounded timed-click contract on
+top of that shared worker:
+
+-   tempo is a whole-number BPM in `20..=300`;
+-   the meter is one of `2/4`, `3/4`, `4/4`, or `6/8`;
+-   beat one is accented;
+-   subdivision is an even `1x` through `4x` split of each beat;
+-   start/restart emits an immediate downbeat.
 
 ## Note Calculation
 

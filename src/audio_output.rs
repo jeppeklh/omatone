@@ -1,11 +1,13 @@
 use crate::config::SharedConfig;
+use crate::metronome::{ActiveMetronome, MetronomeBeat, MetronomeStartError, MetronomeState};
 use crate::note::Note;
 use crate::protocol::{ErrorCode, ToneVoice, UiMessage};
 use crate::protocol_io::ProtocolWriter;
 use crate::reference_tone::{
-    ReferenceToneGenerator, ReferenceToneScene, ToneGeneratorError, DEFAULT_OUTPUT_LEVEL,
-    DEFAULT_RAMP_DURATION_MS, DEFAULT_SAMPLE_RATE_HZ,
+    ReferenceToneScene, ToneGeneratorError, DEFAULT_OUTPUT_LEVEL, DEFAULT_RAMP_DURATION_MS,
+    DEFAULT_SAMPLE_RATE_HZ,
 };
+use crate::shared_audio::SharedAudioMixer;
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
 use pulse::def::BufferAttr;
@@ -20,7 +22,7 @@ use std::thread::{self, JoinHandle};
 const OUTPUT_CHANNELS: u8 = 2;
 const CHUNK_FRAMES: usize = 240;
 const OUTPUT_BUFFER_CHUNKS: u32 = 4;
-const MAX_STOP_DRAIN_CHUNKS: usize = 8;
+const MAX_SHUTDOWN_DRAIN_CHUNKS: usize = 8;
 
 pub struct AudioOutput {
     inner: AudioOutputInner,
@@ -45,6 +47,7 @@ struct MockPlayback {
     mode: MockAudioOutputMode,
     shared_config: SharedConfig,
     active_scene: Option<ReferenceToneScene>,
+    active_metronome: Option<MetronomeState>,
 }
 
 enum PlaybackCommand {
@@ -56,6 +59,13 @@ enum PlaybackCommand {
         reply: SyncSender<Result<Option<ActiveTone>, OutputControlError>>,
     },
     Stop {
+        reply: SyncSender<Result<(), OutputControlError>>,
+    },
+    StartMetronome {
+        state: MetronomeState,
+        reply: SyncSender<Result<MetronomeState, OutputControlError>>,
+    },
+    StopMetronome {
         reply: SyncSender<Result<(), OutputControlError>>,
     },
     Shutdown,
@@ -84,6 +94,7 @@ impl AudioOutput {
                     mode,
                     shared_config,
                     active_scene: None,
+                    active_metronome: None,
                 })),
             });
         }
@@ -166,6 +177,54 @@ impl AudioOutput {
                 .stop(),
         }
     }
+
+    pub fn start_metronome(
+        &self,
+        state: MetronomeState,
+    ) -> Result<MetronomeState, OutputControlError> {
+        match &self.inner {
+            AudioOutputInner::Worker { command_tx, .. } => {
+                let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                command_tx
+                    .send(PlaybackCommand::StartMetronome {
+                        state,
+                        reply: reply_tx,
+                    })
+                    .map_err(|_| {
+                        OutputControlError::disconnected("audio output worker is unavailable")
+                    })?;
+
+                reply_rx.recv().map_err(|_| {
+                    OutputControlError::disconnected("audio output worker did not respond")
+                })?
+            }
+            AudioOutputInner::Mock(mock) => mock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .start_metronome(state),
+        }
+    }
+
+    pub fn stop_metronome(&self) -> Result<(), OutputControlError> {
+        match &self.inner {
+            AudioOutputInner::Worker { command_tx, .. } => {
+                let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                command_tx
+                    .send(PlaybackCommand::StopMetronome { reply: reply_tx })
+                    .map_err(|_| {
+                        OutputControlError::disconnected("audio output worker is unavailable")
+                    })?;
+
+                reply_rx.recv().map_err(|_| {
+                    OutputControlError::disconnected("audio output worker did not respond")
+                })?
+            }
+            AudioOutputInner::Mock(mock) => mock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .stop_metronome(),
+        }
+    }
 }
 
 impl Drop for AudioOutput {
@@ -237,6 +296,35 @@ impl MockPlayback {
             )),
         }
     }
+
+    fn start_metronome(
+        &mut self,
+        state: MetronomeState,
+    ) -> Result<MetronomeState, OutputControlError> {
+        match self.mode {
+            MockAudioOutputMode::Ok => {
+                self.active_metronome = Some(state);
+                Ok(state)
+            }
+            MockAudioOutputMode::Unavailable => Err(OutputControlError::unavailable(
+                "simulated audio output unavailable",
+            )),
+            MockAudioOutputMode::Disconnected => Err(OutputControlError::disconnected(
+                "simulated audio output disconnected",
+            )),
+        }
+    }
+
+    fn stop_metronome(&mut self) -> Result<(), OutputControlError> {
+        self.active_metronome = None;
+
+        match self.mode {
+            MockAudioOutputMode::Ok | MockAudioOutputMode::Unavailable => Ok(()),
+            MockAudioOutputMode::Disconnected => Err(OutputControlError::disconnected(
+                "simulated audio output disconnected",
+            )),
+        }
+    }
 }
 
 impl OutputControlError {
@@ -274,8 +362,10 @@ struct PulsePlayback {
     sample_spec: Spec,
     buffer_attr: BufferAttr,
     shared_config: SharedConfig,
-    generator: ReferenceToneGenerator,
+    mixer: SharedAudioMixer,
     active_scene: Option<ReferenceToneScene>,
+    active_metronome: Option<ActiveMetronome>,
+    mono_buffer: Vec<f32>,
     sample_buffer: Vec<f32>,
     byte_buffer: Vec<u8>,
 }
@@ -308,12 +398,14 @@ impl PulsePlayback {
             sample_spec,
             buffer_attr,
             shared_config,
-            generator: ReferenceToneGenerator::new(
+            mixer: SharedAudioMixer::new(
                 DEFAULT_SAMPLE_RATE_HZ,
                 DEFAULT_OUTPUT_LEVEL,
                 DEFAULT_RAMP_DURATION_MS,
             ),
             active_scene: None,
+            active_metronome: None,
+            mono_buffer: vec![0.0; CHUNK_FRAMES],
             sample_buffer: vec![0.0; CHUNK_FRAMES * OUTPUT_CHANNELS as usize],
             byte_buffer: Vec::with_capacity(
                 CHUNK_FRAMES * OUTPUT_CHANNELS as usize * std::mem::size_of::<f32>(),
@@ -325,8 +417,8 @@ impl PulsePlayback {
         let active_tone = build_active_tone(&scene, self.shared_config.reference_a_hz())?;
 
         self.ensure_stream()?;
-        self.generator
-            .play_notes(&generator_voices(&active_tone))
+        self.mixer
+            .play_reference_notes(&generator_voices(&active_tone))
             .map_err(|ToneGeneratorError::InvalidFrequency| {
                 OutputControlError::internal(
                     "reference-tone generator rejected a valid note frequency",
@@ -344,8 +436,8 @@ impl PulsePlayback {
         let active_tone = build_active_tone(scene, self.shared_config.reference_a_hz())?;
 
         self.ensure_stream()?;
-        self.generator
-            .play_notes(&generator_voices(&active_tone))
+        self.mixer
+            .play_reference_notes(&generator_voices(&active_tone))
             .map_err(|ToneGeneratorError::InvalidFrequency| {
                 OutputControlError::internal(
                     "reference-tone generator rejected a valid note frequency",
@@ -357,31 +449,87 @@ impl PulsePlayback {
 
     fn stop(&mut self) -> Result<(), OutputControlError> {
         self.active_scene = None;
-        self.generator.stop();
-
-        if self.stream.is_some() {
-            for _ in 0..MAX_STOP_DRAIN_CHUNKS {
-                if !self.generator.is_audible() {
-                    break;
-                }
-                self.render_chunk()?;
-            }
-        }
+        self.mixer.stop_reference_notes();
 
         Ok(())
     }
 
-    fn is_idle(&self) -> bool {
-        self.generator.is_idle()
+    fn start_metronome(
+        &mut self,
+        state: MetronomeState,
+    ) -> Result<MetronomeState, OutputControlError> {
+        self.ensure_stream()?;
+        self.mixer.clear_timed_pulses();
+
+        let (metronome, _downbeat) =
+            ActiveMetronome::start(DEFAULT_SAMPLE_RATE_HZ, state, &mut self.mixer)
+                .map_err(map_metronome_start_error)?;
+        let state = metronome.state();
+        self.active_metronome = Some(metronome);
+
+        Ok(state)
     }
 
-    fn render_chunk(&mut self) -> Result<(), OutputControlError> {
+    fn stop_metronome(&mut self) -> Result<(), OutputControlError> {
+        self.active_metronome = None;
+        self.mixer.clear_timed_pulses();
+
+        Ok(())
+    }
+
+    fn shutdown(&mut self) {
+        self.active_scene = None;
+        self.active_metronome = None;
+        self.mixer.clear_timed_pulses();
+        self.mixer.stop_reference_notes();
+
+        if self.stream.is_some() {
+            for _ in 0..MAX_SHUTDOWN_DRAIN_CHUNKS {
+                if !self.mixer.reference_tone_is_audible() {
+                    break;
+                }
+                if self.render_chunk().is_err() {
+                    break;
+                }
+            }
+        }
+
+        self.mixer.silence_immediately();
+    }
+
+    fn is_idle(&self) -> bool {
+        self.active_metronome.is_none() && self.mixer.is_idle()
+    }
+
+    fn render_chunk(&mut self) -> Result<Vec<MetronomeBeat>, OutputControlError> {
         let Some(stream) = self.stream.as_ref() else {
-            return Ok(());
+            return Ok(Vec::new());
         };
 
-        self.generator
-            .render_interleaved(OUTPUT_CHANNELS as usize, &mut self.sample_buffer);
+        let beat_events = if let Some(metronome) = &mut self.active_metronome {
+            metronome
+                .schedule_chunk(&mut self.mixer, CHUNK_FRAMES)
+                .map_err(|ToneGeneratorError::InvalidFrequency| {
+                    OutputControlError::internal(
+                        "metronome click generator rejected a built-in click frequency",
+                    )
+                })?
+        } else {
+            Vec::new()
+        };
+
+        self.mixer.render_mono(&mut self.mono_buffer);
+
+        for (frame, sample) in self
+            .sample_buffer
+            .chunks_exact_mut(OUTPUT_CHANNELS as usize)
+            .zip(&self.mono_buffer)
+        {
+            for channel in frame {
+                *channel = *sample;
+            }
+        }
+
         self.byte_buffer.clear();
 
         for sample in &self.sample_buffer {
@@ -390,13 +538,16 @@ impl PulsePlayback {
 
         stream.write(&self.byte_buffer).map_err(|error| {
             OutputControlError::disconnected(format!("audio output write failed: {error}"))
-        })
+        })?;
+
+        Ok(beat_events)
     }
 
     fn handle_runtime_error(&mut self) {
         self.stream = None;
         self.active_scene = None;
-        self.generator.silence_immediately();
+        self.active_metronome = None;
+        self.mixer.silence_immediately();
     }
 
     fn ensure_stream(&mut self) -> Result<(), OutputControlError> {
@@ -455,9 +606,12 @@ fn output_worker_loop(
             }
         }
 
-        if let Err(error) = playback.render_chunk() {
-            playback.handle_runtime_error();
-            emit_output_error(&protocol_writer, error);
+        match playback.render_chunk() {
+            Ok(beat_events) => emit_metronome_beats(&protocol_writer, &beat_events),
+            Err(error) => {
+                playback.handle_runtime_error();
+                emit_output_error(&protocol_writer, error);
+            }
         }
     }
 }
@@ -476,9 +630,27 @@ fn handle_command(playback: &mut PulsePlayback, command: PlaybackCommand) -> boo
             let _ = reply.send(playback.stop());
             true
         }
+        PlaybackCommand::StartMetronome { state, reply } => {
+            let _ = reply.send(playback.start_metronome(state));
+            true
+        }
+        PlaybackCommand::StopMetronome { reply } => {
+            let _ = reply.send(playback.stop_metronome());
+            true
+        }
         PlaybackCommand::Shutdown => {
-            let _ = playback.stop();
+            playback.shutdown();
             false
+        }
+    }
+}
+
+fn map_metronome_start_error(error: MetronomeStartError) -> OutputControlError {
+    match error {
+        MetronomeStartError::InvalidPulse(ToneGeneratorError::InvalidFrequency) => {
+            OutputControlError::internal(
+                "metronome click generator rejected a built-in click frequency",
+            )
         }
     }
 }
@@ -532,5 +704,20 @@ fn emit_output_error(protocol_writer: &ProtocolWriter, error: OutputControlError
         message: error.message,
     }) {
         eprintln!("omatune-helper: failed to emit audio output error: {write_error}");
+    }
+}
+
+fn emit_metronome_beats(protocol_writer: &ProtocolWriter, beat_events: &[MetronomeBeat]) {
+    for beat in beat_events {
+        if let Err(write_error) = protocol_writer.write_message(&UiMessage::MetronomeBeat {
+            beat_in_bar: beat.beat_in_bar,
+            beats_per_bar: beat.beats_per_bar,
+            beat_unit: beat.beat_unit,
+            subdivision_step: beat.subdivision_step,
+            subdivision: beat.subdivision,
+            accented: beat.accented,
+        }) {
+            eprintln!("omatune-helper: failed to emit metronome beat message: {write_error}");
+        }
     }
 }
