@@ -11,12 +11,14 @@ fn run_helper_with_input(
     stdin_text: &str,
     input_mode: Option<&str>,
     output_mode: Option<&str>,
+    args: &[&str],
 ) -> Output {
     let mut command = Command::new(helper_bin());
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    command.args(args);
     if let Some(mode) = input_mode {
         command.env("OMATUNE_TEST_INPUT_MODE", mode);
     }
@@ -40,12 +42,14 @@ fn run_helper_with_delay_before_eof(
     delay: Duration,
     input_mode: Option<&str>,
     output_mode: Option<&str>,
+    args: &[&str],
 ) -> Output {
     let mut command = Command::new(helper_bin());
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    command.args(args);
     if let Some(mode) = input_mode {
         command.env("OMATUNE_TEST_INPUT_MODE", mode);
     }
@@ -71,7 +75,7 @@ fn stdout_lines(output: &Output) -> Vec<String> {
 
 #[test]
 fn startup_input_failure_emits_error_before_ready() {
-    let output = run_helper_with_input("", Some("unavailable"), Some("ok"));
+    let output = run_helper_with_input("", Some("unavailable"), Some("ok"), &[]);
     let lines = stdout_lines(&output);
 
     assert!(!output.status.success());
@@ -89,6 +93,7 @@ fn repeated_startup_cycles_keep_ready_before_no_signal() {
             Duration::from_millis(30),
             Some("no_signal"),
             Some("ok"),
+            &[],
         );
         let lines = stdout_lines(&output);
 
@@ -109,6 +114,7 @@ fn play_and_stop_tone_work_without_real_audio_device_in_mock_mode() {
         "{\"type\":\"play_tone\",\"note\":\"E2\"}\n{\"type\":\"stop_tone\"}\n",
         Some("idle"),
         Some("ok"),
+        &[],
     );
     let lines = stdout_lines(&output);
 
@@ -127,6 +133,7 @@ fn runtime_output_failure_is_reported_without_crashing_helper() {
         "{\"type\":\"play_tone\",\"note\":\"A4\"}\n",
         Some("idle"),
         Some("unavailable"),
+        &[],
     );
     let lines = stdout_lines(&output);
 
@@ -146,6 +153,7 @@ fn runtime_input_disconnect_is_reported_after_ready() {
         Duration::from_millis(160),
         Some("disconnect"),
         Some("ok"),
+        &[],
     );
     let lines = stdout_lines(&output);
 
@@ -161,8 +169,12 @@ fn runtime_input_disconnect_is_reported_after_ready() {
 
 #[test]
 fn simulated_pitch_is_emitted_after_ready() {
-    let output =
-        run_helper_with_delay_before_eof(Duration::from_millis(30), Some("pitch:A4"), Some("ok"));
+    let output = run_helper_with_delay_before_eof(
+        Duration::from_millis(30),
+        Some("pitch:A4"),
+        Some("ok"),
+        &[],
+    );
     let lines = stdout_lines(&output);
 
     assert!(output.status.success());
@@ -170,5 +182,58 @@ fn simulated_pitch_is_emitted_after_ready() {
     assert_eq!(
         lines[1],
         r#"{"type":"pitch","note":"A4","frequency_hz":440.0,"cents":0.0,"confidence":1.0}"#
+    );
+}
+
+#[test]
+fn startup_reference_a_argument_calibrates_initial_pitch_and_tone() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\"}\n",
+        Some("pitch:A4"),
+        Some("ok"),
+        &["--reference-a-hz", "442.0"],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(lines[0], r#"{"type":"ready"}"#);
+    assert_eq!(lines.len(), 3);
+    assert!(lines[1..].contains(&r#"{"type":"pitch","note":"A4","frequency_hz":442.0,"cents":0.0,"confidence":1.0}"#.to_owned()));
+    assert!(lines[1..].contains(&r#"{"type":"tone_started","note":"A4","frequency_hz":442.0}"#.to_owned()));
+}
+
+#[test]
+fn runtime_reference_a_update_restarts_active_tone_with_calibrated_frequency() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"set_reference_a\",\"frequency_hz\":442.0}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":442.0}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn invalid_startup_reference_a_emits_error_before_ready() {
+    let output =
+        run_helper_with_input("", Some("idle"), Some("ok"), &["--reference-a-hz", "399.0"]);
+    let lines = stdout_lines(&output);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"error","code":"invalid_reference_frequency","message":"invalid reference A frequency '399.0'"}"#.to_owned(),
+        ]
     );
 }

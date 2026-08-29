@@ -357,6 +357,25 @@ mod tests {
     }
 
     #[test]
+    fn calibrated_reference_a_changes_note_math_consistently() {
+        let calibrated_reference_a_hz = 442.0;
+        let a4 = "A4".parse::<Note>().unwrap();
+        let e2 = "E2".parse::<Note>().unwrap();
+
+        assert_close(
+            a4.frequency_hz(calibrated_reference_a_hz).unwrap(),
+            442.0,
+            0.0001,
+        );
+
+        let calibrated_e2 = e2.frequency_hz(calibrated_reference_a_hz).unwrap();
+        let nearest = nearest_note_for_frequency(calibrated_e2, calibrated_reference_a_hz).unwrap();
+        assert_eq!(nearest.note.to_string(), "E2");
+        assert_close(nearest.reference_frequency_hz, calibrated_e2, 0.0001);
+        assert_close(nearest.cents, 0.0, 0.0001);
+    }
+
+    #[test]
     fn finds_nearest_note_and_cents_near_semitone_boundaries() {
         let a4 = "A4".parse::<Note>().unwrap();
         let a_sharp4 = "A#4".parse::<Note>().unwrap();

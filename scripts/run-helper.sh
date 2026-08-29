@@ -10,24 +10,24 @@ debug_helper="$repo_root/target/debug/omatune-helper"
 release_helper="$repo_root/target/release/omatune-helper"
 
 if [[ -n "${OMATUNE_HELPER_BIN:-}" && -x "${OMATUNE_HELPER_BIN}" ]]; then
-  exec "${OMATUNE_HELPER_BIN}"
+  exec "${OMATUNE_HELPER_BIN}" "$@"
 fi
 
 if [[ -x "$packaged_helper" ]]; then
-  exec "$packaged_helper"
+  exec "$packaged_helper" "$@"
 fi
 
 if [[ -x "$debug_helper" ]]; then
-  exec "$debug_helper"
+  exec "$debug_helper" "$@"
 fi
 
 if [[ -x "$release_helper" ]]; then
-  exec "$release_helper"
+  exec "$release_helper" "$@"
 fi
 
 if command -v cargo >/dev/null 2>&1; then
   # Development bootstrap when no packaged helper is present.
-  exec cargo run --quiet --manifest-path "$repo_root/Cargo.toml" --bin omatune-helper --
+  exec cargo run --quiet --manifest-path "$repo_root/Cargo.toml" --bin omatune-helper -- "$@"
 fi
 
 printf '%s\n' 'omatune-helper launcher: no packaged or built helper found and cargo is unavailable' >&2

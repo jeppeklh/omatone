@@ -23,7 +23,8 @@ Owns:
 -   presentation and layout;
 -   tuner activation/deactivation;
 -   user interaction for note selection and guitar shortcuts;
--   helper process lifecycle from the UI side;
+ -   persisted calibration, spelling, and tuning-preset preferences;
+ -   helper process lifecycle from the UI side;
 -   visual smoothing that does not change pitch correctness;
 -   displaying pitch, no-signal, and error states.
 
@@ -35,7 +36,8 @@ Owns:
 -   reference-tone audio output;
 -   pitch detection and confidence estimation;
 -   note parsing, normalization, and note/frequency math;
--   silence and weak-signal rejection;
+ -   validated helper-side reference A configuration;
+ -   silence and weak-signal rejection;
 -   helper protocol I/O;
 -   audio-related error handling.
 
@@ -61,6 +63,10 @@ Output path:
     `pitch` or `no_signal` messages.
 -   The QML launcher prefers a packaged plugin-local helper binary, then
     local build outputs, then a development `cargo run` fallback.
+-   Persisted widget settings live in the bar entry inside Omarchy's
+    `shell.json`; the helper receives the current reference A value at
+    startup and can also receive additive runtime updates over the
+    protocol.
 -   Reference-tone playback must not block microphone analysis.
 -   Expensive DSP work must not run on the QML UI thread.
 

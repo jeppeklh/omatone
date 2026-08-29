@@ -1,11 +1,13 @@
+use crate::config::validate_reference_a_hz;
 use crate::note::Note;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fmt;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     PlayTone { note: Note },
+    SetReferenceA { frequency_hz: f64 },
     StopTone,
 }
 
@@ -18,6 +20,7 @@ pub enum ErrorCode {
     AudioOutputDisconnected,
     UnsupportedFormat,
     InvalidNote,
+    InvalidReferenceFrequency,
     InvalidCommand,
     InternalError,
 }
@@ -56,12 +59,14 @@ pub enum CommandParseError {
     MalformedJson(String),
     InvalidCommand(String),
     InvalidNote(String),
+    InvalidReferenceFrequency(String),
 }
 
 impl CommandParseError {
     pub fn code(&self) -> ErrorCode {
         match self {
             CommandParseError::InvalidNote(_) => ErrorCode::InvalidNote,
+            CommandParseError::InvalidReferenceFrequency(_) => ErrorCode::InvalidReferenceFrequency,
             CommandParseError::MalformedJson(_) | CommandParseError::InvalidCommand(_) => {
                 ErrorCode::InvalidCommand
             }
@@ -82,6 +87,9 @@ impl fmt::Display for CommandParseError {
             CommandParseError::MalformedJson(error) => write!(f, "malformed command JSON: {error}"),
             CommandParseError::InvalidCommand(error) => write!(f, "invalid command: {error}"),
             CommandParseError::InvalidNote(error) => write!(f, "invalid note: {error}"),
+            CommandParseError::InvalidReferenceFrequency(error) => {
+                write!(f, "invalid reference A frequency: {error}")
+            }
         }
     }
 }
@@ -101,6 +109,7 @@ pub fn parse_command(input: &str) -> Result<Command, CommandParseError> {
 
     match command_type {
         "play_tone" => parse_play_tone(object),
+        "set_reference_a" => parse_set_reference_a(object),
         "stop_tone" => Ok(Command::StopTone),
         other => Err(CommandParseError::InvalidCommand(format!(
             "unknown command type '{other}'"
@@ -117,6 +126,22 @@ fn parse_play_tone(object: &Map<String, Value>) -> Result<Command, CommandParseE
         .map_err(|error| CommandParseError::InvalidNote(error.to_string()))?;
 
     Ok(Command::PlayTone { note })
+}
+
+fn parse_set_reference_a(object: &Map<String, Value>) -> Result<Command, CommandParseError> {
+    let frequency_hz = object
+        .get("frequency_hz")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| {
+            CommandParseError::InvalidCommand(
+                "set_reference_a requires numeric field 'frequency_hz'".to_owned(),
+            )
+        })?;
+
+    let frequency_hz = validate_reference_a_hz(frequency_hz)
+        .map_err(|error| CommandParseError::InvalidReferenceFrequency(error.to_string()))?;
+
+    Ok(Command::SetReferenceA { frequency_hz })
 }
 
 #[cfg(test)]
@@ -143,6 +168,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_reference_a_updates() {
+        assert_eq!(
+            parse_command(r#"{"type":"set_reference_a","frequency_hz":442.0}"#).unwrap(),
+            Command::SetReferenceA {
+                frequency_hz: 442.0,
+            }
+        );
+    }
+
+    #[test]
     fn rejects_malformed_json_and_unknown_command_types() {
         assert!(matches!(
             parse_command("{not json}"),
@@ -150,8 +185,8 @@ mod tests {
         ));
 
         assert_eq!(
-            parse_command(r#"{"type":"set_reference_a","frequency_hz":442.0}"#).unwrap_err(),
-            CommandParseError::InvalidCommand("unknown command type 'set_reference_a'".to_owned())
+            parse_command(r#"{"type":"unknown"}"#).unwrap_err(),
+            CommandParseError::InvalidCommand("unknown command type 'unknown'".to_owned())
         );
     }
 
@@ -165,6 +200,18 @@ mod tests {
             parse_command(r#"{"type":"play_tone","note":"C9"}"#).unwrap_err(),
             CommandParseError::InvalidNote(
                 "octave 9 is outside the supported range 0..=8".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"set_reference_a"}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "set_reference_a requires numeric field 'frequency_hz'".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"set_reference_a","frequency_hz":399.0}"#).unwrap_err(),
+            CommandParseError::InvalidReferenceFrequency(
+                "reference A frequency must be within 400.0..=480.0 Hz".to_owned()
             )
         );
     }
@@ -202,6 +249,10 @@ mod tests {
         assert_eq!(
             CommandParseError::MalformedJson("bad".to_owned()).code(),
             ErrorCode::InvalidCommand
+        );
+        assert_eq!(
+            CommandParseError::InvalidReferenceFrequency("bad".to_owned()).code(),
+            ErrorCode::InvalidReferenceFrequency
         );
     }
 }

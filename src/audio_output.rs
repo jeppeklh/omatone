@@ -1,4 +1,5 @@
-use crate::note::{Note, DEFAULT_REFERENCE_A_HZ};
+use crate::config::SharedConfig;
+use crate::note::Note;
 use crate::protocol::{ErrorCode, UiMessage};
 use crate::protocol_io::ProtocolWriter;
 use crate::reference_tone::{
@@ -13,6 +14,7 @@ use pulse::stream::Direction;
 use std::env;
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
+use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 
 const OUTPUT_CHANNELS: u8 = 2;
@@ -29,14 +31,20 @@ enum AudioOutputInner {
         command_tx: Sender<PlaybackCommand>,
         worker: Option<JoinHandle<()>>,
     },
-    Mock(MockAudioOutput),
+    Mock(Mutex<MockPlayback>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MockAudioOutput {
+enum MockAudioOutputMode {
     Ok,
     Unavailable,
     Disconnected,
+}
+
+struct MockPlayback {
+    mode: MockAudioOutputMode,
+    shared_config: SharedConfig,
+    active_note: Option<Note>,
 }
 
 enum PlaybackCommand {
@@ -44,10 +52,19 @@ enum PlaybackCommand {
         note: Note,
         reply: SyncSender<Result<f64, OutputControlError>>,
     },
+    RefreshReferenceA {
+        reply: SyncSender<Result<Option<ActiveTone>, OutputControlError>>,
+    },
     Stop {
         reply: SyncSender<Result<(), OutputControlError>>,
     },
     Shutdown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ActiveTone {
+    pub note: Note,
+    pub frequency_hz: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -57,18 +74,22 @@ pub struct OutputControlError {
 }
 
 impl AudioOutput {
-    pub fn new(protocol_writer: ProtocolWriter) -> io::Result<Self> {
-        if let Some(mock) = MockAudioOutput::from_env() {
+    pub fn new(protocol_writer: ProtocolWriter, shared_config: SharedConfig) -> io::Result<Self> {
+        if let Some(mode) = MockAudioOutputMode::from_env() {
             let _ = protocol_writer;
             return Ok(Self {
-                inner: AudioOutputInner::Mock(mock),
+                inner: AudioOutputInner::Mock(Mutex::new(MockPlayback {
+                    mode,
+                    shared_config,
+                    active_note: None,
+                })),
             });
         }
 
         let (command_tx, command_rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("omatune-audio-output".to_owned())
-            .spawn(move || output_worker_loop(command_rx, protocol_writer))?;
+            .spawn(move || output_worker_loop(command_rx, protocol_writer, shared_config))?;
 
         Ok(Self {
             inner: AudioOutputInner::Worker {
@@ -95,7 +116,31 @@ impl AudioOutput {
                     OutputControlError::disconnected("audio output worker did not respond")
                 })?
             }
-            AudioOutputInner::Mock(mock) => mock.play(note),
+            AudioOutputInner::Mock(mock) => mock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .play(note),
+        }
+    }
+
+    pub fn refresh_reference_a(&self) -> Result<Option<ActiveTone>, OutputControlError> {
+        match &self.inner {
+            AudioOutputInner::Worker { command_tx, .. } => {
+                let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                command_tx
+                    .send(PlaybackCommand::RefreshReferenceA { reply: reply_tx })
+                    .map_err(|_| {
+                        OutputControlError::disconnected("audio output worker is unavailable")
+                    })?;
+
+                reply_rx.recv().map_err(|_| {
+                    OutputControlError::disconnected("audio output worker did not respond")
+                })?
+            }
+            AudioOutputInner::Mock(mock) => mock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .refresh_reference_a(),
         }
     }
 
@@ -113,7 +158,10 @@ impl AudioOutput {
                     OutputControlError::disconnected("audio output worker did not respond")
                 })?
             }
-            AudioOutputInner::Mock(mock) => mock.stop(),
+            AudioOutputInner::Mock(mock) => mock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .stop(),
         }
     }
 }
@@ -131,7 +179,7 @@ impl Drop for AudioOutput {
     }
 }
 
-impl MockAudioOutput {
+impl MockAudioOutputMode {
     fn from_env() -> Option<Self> {
         match env::var("OMATUNE_TEST_OUTPUT_MODE").ok()?.trim() {
             "ok" => Some(Self::Ok),
@@ -140,27 +188,58 @@ impl MockAudioOutput {
             _ => None,
         }
     }
+}
 
-    fn play(self, note: Note) -> Result<f64, OutputControlError> {
-        let frequency_hz = note.frequency_hz(DEFAULT_REFERENCE_A_HZ).map_err(|error| {
-            OutputControlError::internal(format!("failed to calculate tone frequency: {error}"))
-        })?;
+impl MockPlayback {
+    fn play(&mut self, note: Note) -> Result<f64, OutputControlError> {
+        let frequency_hz = note
+            .frequency_hz(self.shared_config.reference_a_hz())
+            .map_err(|error| {
+                OutputControlError::internal(format!("failed to calculate tone frequency: {error}"))
+            })?;
 
-        match self {
-            Self::Ok => Ok(frequency_hz),
-            Self::Unavailable => Err(OutputControlError::unavailable(
+        match self.mode {
+            MockAudioOutputMode::Ok => {
+                self.active_note = Some(note);
+                Ok(frequency_hz)
+            }
+            MockAudioOutputMode::Unavailable => Err(OutputControlError::unavailable(
                 "simulated audio output unavailable",
             )),
-            Self::Disconnected => Err(OutputControlError::disconnected(
+            MockAudioOutputMode::Disconnected => Err(OutputControlError::disconnected(
                 "simulated audio output disconnected",
             )),
         }
     }
 
-    fn stop(self) -> Result<(), OutputControlError> {
-        match self {
-            Self::Ok | Self::Unavailable => Ok(()),
-            Self::Disconnected => Err(OutputControlError::disconnected(
+    fn refresh_reference_a(&mut self) -> Result<Option<ActiveTone>, OutputControlError> {
+        let Some(note) = self.active_note else {
+            return Ok(None);
+        };
+
+        let frequency_hz = note
+            .frequency_hz(self.shared_config.reference_a_hz())
+            .map_err(|error| {
+                OutputControlError::internal(format!("failed to calculate tone frequency: {error}"))
+            })?;
+
+        match self.mode {
+            MockAudioOutputMode::Ok => Ok(Some(ActiveTone { note, frequency_hz })),
+            MockAudioOutputMode::Unavailable => Err(OutputControlError::unavailable(
+                "simulated audio output unavailable",
+            )),
+            MockAudioOutputMode::Disconnected => Err(OutputControlError::disconnected(
+                "simulated audio output disconnected",
+            )),
+        }
+    }
+
+    fn stop(&mut self) -> Result<(), OutputControlError> {
+        self.active_note = None;
+
+        match self.mode {
+            MockAudioOutputMode::Ok | MockAudioOutputMode::Unavailable => Ok(()),
+            MockAudioOutputMode::Disconnected => Err(OutputControlError::disconnected(
                 "simulated audio output disconnected",
             )),
         }
@@ -201,13 +280,15 @@ struct PulsePlayback {
     stream: Option<psimple::Simple>,
     sample_spec: Spec,
     buffer_attr: BufferAttr,
+    shared_config: SharedConfig,
     generator: ReferenceToneGenerator,
+    active_note: Option<Note>,
     sample_buffer: Vec<f32>,
     byte_buffer: Vec<u8>,
 }
 
 impl PulsePlayback {
-    fn new() -> Result<Self, OutputControlError> {
+    fn new(shared_config: SharedConfig) -> Result<Self, OutputControlError> {
         let sample_spec = Spec {
             format: Format::FLOAT32NE,
             rate: DEFAULT_SAMPLE_RATE_HZ,
@@ -233,11 +314,13 @@ impl PulsePlayback {
             stream: None,
             sample_spec,
             buffer_attr,
+            shared_config,
             generator: ReferenceToneGenerator::new(
                 DEFAULT_SAMPLE_RATE_HZ,
                 DEFAULT_OUTPUT_LEVEL,
                 DEFAULT_RAMP_DURATION_MS,
             ),
+            active_note: None,
             sample_buffer: vec![0.0; CHUNK_FRAMES * OUTPUT_CHANNELS as usize],
             byte_buffer: Vec::with_capacity(
                 CHUNK_FRAMES * OUTPUT_CHANNELS as usize * std::mem::size_of::<f32>(),
@@ -246,9 +329,35 @@ impl PulsePlayback {
     }
 
     fn play(&mut self, note: Note) -> Result<f64, OutputControlError> {
-        let frequency_hz = note.frequency_hz(DEFAULT_REFERENCE_A_HZ).map_err(|error| {
-            OutputControlError::internal(format!("failed to calculate tone frequency: {error}"))
-        })?;
+        let frequency_hz = note
+            .frequency_hz(self.shared_config.reference_a_hz())
+            .map_err(|error| {
+                OutputControlError::internal(format!("failed to calculate tone frequency: {error}"))
+            })?;
+
+        self.ensure_stream()?;
+        self.generator.play_frequency(frequency_hz).map_err(
+            |ToneGeneratorError::InvalidFrequency| {
+                OutputControlError::internal(
+                    "reference-tone generator rejected a valid note frequency",
+                )
+            },
+        )?;
+        self.active_note = Some(note);
+
+        Ok(frequency_hz)
+    }
+
+    fn refresh_reference_a(&mut self) -> Result<Option<ActiveTone>, OutputControlError> {
+        let Some(note) = self.active_note else {
+            return Ok(None);
+        };
+
+        let frequency_hz = note
+            .frequency_hz(self.shared_config.reference_a_hz())
+            .map_err(|error| {
+                OutputControlError::internal(format!("failed to calculate tone frequency: {error}"))
+            })?;
 
         self.ensure_stream()?;
         self.generator.play_frequency(frequency_hz).map_err(
@@ -259,10 +368,11 @@ impl PulsePlayback {
             },
         )?;
 
-        Ok(frequency_hz)
+        Ok(Some(ActiveTone { note, frequency_hz }))
     }
 
     fn stop(&mut self) -> Result<(), OutputControlError> {
+        self.active_note = None;
         self.generator.stop();
 
         if self.stream.is_some() {
@@ -301,6 +411,7 @@ impl PulsePlayback {
 
     fn handle_runtime_error(&mut self) {
         self.stream = None;
+        self.active_note = None;
         self.generator.silence_immediately();
     }
 
@@ -328,8 +439,12 @@ impl PulsePlayback {
     }
 }
 
-fn output_worker_loop(command_rx: Receiver<PlaybackCommand>, protocol_writer: ProtocolWriter) {
-    let mut playback = match PulsePlayback::new() {
+fn output_worker_loop(
+    command_rx: Receiver<PlaybackCommand>,
+    protocol_writer: ProtocolWriter,
+    shared_config: SharedConfig,
+) {
+    let mut playback = match PulsePlayback::new(shared_config) {
         Ok(playback) => playback,
         Err(error) => {
             emit_output_error(&protocol_writer, error);
@@ -367,6 +482,10 @@ fn handle_command(playback: &mut PulsePlayback, command: PlaybackCommand) -> boo
     match command {
         PlaybackCommand::Play { note, reply } => {
             let _ = reply.send(playback.play(note));
+            true
+        }
+        PlaybackCommand::RefreshReferenceA { reply } => {
+            let _ = reply.send(playback.refresh_reference_a());
             true
         }
         PlaybackCommand::Stop { reply } => {

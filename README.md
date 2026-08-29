@@ -19,6 +19,8 @@ note and hear its exact reference pitch for tuning by ear.
 
 -   `docs/architecture.md`: implementation-facing ownership and runtime
     boundaries
+-   `docs/configuration.md`: persisted settings schema, defaults, and
+    migration rules
 -   `docs/omarchy-plugin-model.md`: confirmed Omarchy/Quickshell plugin
     facts and local validation workflow
 -   `docs/protocol.md`: NDJSON contract between the Rust helper and the
@@ -31,7 +33,7 @@ note and hear its exact reference pitch for tuning by ear.
     failure simulations, and the manual release checklist
 -   `docs/roadmap.md`: product roadmap beyond the initial release
 
-## v0.1 Scope
+## Current Scope
 
 -   Chromatic pitch detection
 -   Automatic nearest-note detection
@@ -40,19 +42,18 @@ note and hear its exact reference pitch for tuning by ear.
 -   Microphone activation/deactivation
 -   Reference-tone playback
 -   Arbitrary note selection for reference tones
--   Standard guitar reference shortcuts: E2, A2, D3, G3, B3, E4
--   A4 = 440 Hz default reference
--   Internal note/frequency calculations designed to support
-    configurable A4 later
+-   Adjustable A4 reference frequency in the supported calibration range
+-   Persisted reference note, tuning preset, and sharp/flat spelling
+    preference
+-   Built-in guitar, bass, ukulele, and violin-family tuning presets
 -   Sensible behavior for silence, weak input, invalid pitch estimates,
     and audio errors
 -   QML bar widget with a small native Rust helper
 
-Not required in v0.1:
+Not included:
 
--   Instrument-specific tuner modes
--   Saved alternate-tuning presets
--   User-facing A4 calibration controls
+-   Instrument-specific pitch engines
+-   Large saved preset libraries
 -   Recording or audio storage
 -   Elaborate visual effects
 

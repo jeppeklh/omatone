@@ -16,6 +16,7 @@ BarWidget {
   property string helperError: ""
   property string runtimeErrorCode: ""
   property string runtimeErrorMessage: ""
+  property bool settingsHydrating: false
   property string signalState: "idle"
   property string detectedNote: ""
   property real detectedFrequencyHz: 0
@@ -23,28 +24,80 @@ BarWidget {
   property real detectedConfidence: 0
   property string activeToneNote: ""
   property real activeToneFrequencyHz: 0
-  property string selectedPitchClass: "A"
-  property int selectedReferenceOctave: 4
+  property real referenceAHz: 440.0
+  property string noteSpelling: "sharps"
+  property string selectedPresetId: "guitar.standard"
+  property int selectedReferenceMidiNumber: 69
   property var pendingCommandLines: []
   property string lastProtocolType: ""
   property string lastProtocolLine: ""
   property string lastStderrLine: ""
   property int lastExitCode: 0
 
-  readonly property var pitchClasses: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-  readonly property var guitarShortcuts: ["E2", "A2", "D3", "G3", "B3", "E4"]
+  readonly property int minimumReferenceMidiNumber: 12
+  readonly property int maximumReferenceMidiNumber: 119
+  readonly property real minimumReferenceAHz: 400.0
+  readonly property real maximumReferenceAHz: 480.0
+  readonly property var sharpPitchClasses: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+  readonly property var flatPitchClasses: ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+  readonly property var pitchClasses: noteSpelling === "flats" ? flatPitchClasses : sharpPitchClasses
+  readonly property var tuningPresetGroups: [
+    {
+      label: "Guitar",
+      presets: [
+        { id: "guitar.standard", label: "Standard", notes: ["E2", "A2", "D3", "G3", "B3", "E4"] },
+        { id: "guitar.drop_d", label: "Drop D", notes: ["D2", "A2", "D3", "G3", "B3", "E4"] },
+        { id: "guitar.dadgad", label: "DADGAD", notes: ["D2", "A2", "D3", "G3", "A3", "D4"] },
+      ],
+    },
+    {
+      label: "Bass",
+      presets: [
+        { id: "bass.standard_4", label: "4-string", notes: ["E1", "A1", "D2", "G2"] },
+        { id: "bass.standard_5", label: "5-string", notes: ["B0", "E1", "A1", "D2", "G2"] },
+      ],
+    },
+    {
+      label: "Ukulele",
+      presets: [
+        { id: "ukulele.standard", label: "Standard", notes: ["G4", "C4", "E4", "A4"] },
+        { id: "ukulele.baritone", label: "Baritone", notes: ["D3", "G3", "B3", "E4"] },
+      ],
+    },
+    {
+      label: "Violin Family",
+      presets: [
+        { id: "violin.violin", label: "Violin", notes: ["G3", "D4", "A4", "E5"] },
+        { id: "violin.viola", label: "Viola", notes: ["C3", "G3", "D4", "A4"] },
+        { id: "violin.cello", label: "Cello", notes: ["C2", "G2", "D3", "A3"] },
+      ],
+    },
+  ]
   readonly property bool pitchActive: signalState === "pitch"
   readonly property bool toneActive: activeToneNote !== ""
   readonly property bool inTune: pitchActive && Math.abs(detectedCents) <= 5
   readonly property bool hasAlert: helperState === "error" || runtimeErrorMessage !== ""
-  readonly property string selectedReferenceNoteLabel: selectedPitchClass + selectedReferenceOctave
+  readonly property int selectedReferencePitchClassIndex: ((selectedReferenceMidiNumber % 12) + 12) % 12
+  readonly property int selectedReferenceOctave: Math.floor(selectedReferenceMidiNumber / 12) - 1
+  readonly property var selectedPreset: presetById(selectedPresetId)
+  readonly property var selectedPresetNotes: selectedPreset ? selectedPreset.notes : []
+  readonly property string selectedPresetLabel: selectedPreset ? (selectedPreset.groupLabel + " | " + selectedPreset.label) : "Guitar | Standard"
+  readonly property string selectedReferenceCommandNoteLabel: formatMidiNote(selectedReferenceMidiNumber, "sharps")
+  readonly property string selectedReferenceNoteLabel: formatMidiNote(selectedReferenceMidiNumber, noteSpelling)
+  readonly property string detectedNoteLabel: displayNoteLabel(detectedNote)
+  readonly property string activeToneNoteLabel: displayNoteLabel(activeToneNote)
   readonly property bool opened: popupLoader.item ? popupLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: popupLoader.item ? popupLoader.item.popoutSwitchClosing === true : false
   readonly property string helperScriptPath: localPath("scripts/run-helper.sh")
-  readonly property var helperCommand: ["bash", helperScriptPath]
+  readonly property var helperCommand: [
+    "bash",
+    helperScriptPath,
+    "--reference-a-hz",
+    formatReferenceAForHelper(referenceAHz),
+  ]
   readonly property string readoutTitleText: {
-    if (pitchActive) return detectedNote
-    if (toneActive) return activeToneNote
+    if (pitchActive) return detectedNoteLabel
+    if (toneActive) return activeToneNoteLabel
     if (helperState === "error") return "ERR"
     if (helperState === "starting") return "..."
     if (helperState === "inactive") return "OFF"
@@ -52,7 +105,7 @@ BarWidget {
   }
   readonly property string readoutFooterText: {
     if (pitchActive) return formatSignedCents(detectedCents) + " | " + formatFrequency(detectedFrequencyHz) + " Hz"
-    if (toneActive) return "Reference tone | " + formatFrequency(activeToneFrequencyHz) + " Hz"
+    if (toneActive) return "Reference tone | " + formatFrequency(activeToneFrequencyHz) + " Hz | A4 = " + formatReferenceA(referenceAHz)
     if (helperState === "starting") return "Opening microphone and output..."
     if (helperState === "inactive") return "Tuner is off"
     if (helperState === "error") return "Restart the helper to recover"
@@ -69,16 +122,19 @@ BarWidget {
     return "Listening for pitch..."
   }
   readonly property string detailText: {
-    if (toneActive) return "Reference tone: " + activeToneNote + " at " + formatFrequency(activeToneFrequencyHz) + " Hz"
-    if (pitchActive) return "Detected pitch is matched against the nearest equal-tempered note."
-    return ""
+    if (toneActive)
+      return "Reference tone: " + activeToneNoteLabel + " at " + formatFrequency(activeToneFrequencyHz) + " Hz"
+        + " | Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
+    if (pitchActive)
+      return "Detected pitch is matched against the nearest equal-tempered note at A4 = " + formatReferenceA(referenceAHz) + "."
+    return "Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
   }
   readonly property string buttonText: {
     if (helperState === "error") return "tun!"
     if (helperState === "inactive") return "tun"
     if (helperState === "starting") return "tun?"
-    if (pitchActive) return vertical ? detectedNote : (detectedNote + " " + formatCompactCents(detectedCents))
-    if (toneActive) return activeToneNote
+    if (pitchActive) return vertical ? detectedNoteLabel : (detectedNoteLabel + " " + formatCompactCents(detectedCents))
+    if (toneActive) return activeToneNoteLabel
     if (runtimeErrorMessage !== "") return "tun!"
     return "listen"
   }
@@ -92,8 +148,11 @@ BarWidget {
     else if (signalState === "no_signal") lines.push("state: no signal")
     else lines.push("state: listening")
 
-    if (pitchActive) lines.push("pitch: " + detectedNote + "  " + formatSignedCents(detectedCents) + "  " + formatFrequency(detectedFrequencyHz) + " Hz")
-    if (toneActive) lines.push("tone: " + activeToneNote + "  " + formatFrequency(activeToneFrequencyHz) + " Hz")
+    if (pitchActive) lines.push("pitch: " + detectedNoteLabel + "  " + formatSignedCents(detectedCents) + "  " + formatFrequency(detectedFrequencyHz) + " Hz")
+    if (toneActive) lines.push("tone: " + activeToneNoteLabel + "  " + formatFrequency(activeToneFrequencyHz) + " Hz")
+    lines.push("preset: " + selectedPresetLabel)
+    lines.push("A4: " + formatReferenceA(referenceAHz))
+    lines.push("spelling: " + noteSpelling)
     if (helperError !== "") lines.push("helper error: " + helperError)
     if (runtimeErrorMessage !== "") lines.push("runtime error: " + runtimeErrorMessage)
     if (lastStderrLine !== "") lines.push("stderr: " + lastStderrLine)
@@ -154,6 +213,202 @@ BarWidget {
     return numeric > 0 ? numeric.toFixed(2) : "0.00"
   }
 
+  function formatReferenceA(value) {
+    return normalizeReferenceAHz(value).toFixed(1) + " Hz"
+  }
+
+  function formatReferenceAForHelper(value) {
+    return normalizeReferenceAHz(value).toFixed(1)
+  }
+
+  function normalizeReferenceAHz(value) {
+    var numeric = finiteNumber(value, 440.0)
+    numeric = Math.round(numeric * 10) / 10
+    return Math.max(minimumReferenceAHz, Math.min(maximumReferenceAHz, numeric))
+  }
+
+  function normalizeNoteSpelling(value) {
+    return String(value || "") === "flats" ? "flats" : "sharps"
+  }
+
+  function noteBasePitchClass(letter) {
+    var value = String(letter || "").toUpperCase()
+    if (value === "C") return 0
+    if (value === "D") return 2
+    if (value === "E") return 4
+    if (value === "F") return 5
+    if (value === "G") return 7
+    if (value === "A") return 9
+    if (value === "B") return 11
+    return -1
+  }
+
+  function parseNoteMidiNumber(noteText) {
+    var match = /^([A-Ga-g])([#b]?)(-?\d+)$/.exec(String(noteText || "").trim())
+    if (!match) return null
+
+    var pitchClass = noteBasePitchClass(match[1])
+    if (pitchClass < 0) return null
+
+    var accidentalOffset = match[2] === "#" ? 1 : (match[2] === "b" ? -1 : 0)
+    var octave = parseInt(match[3], 10)
+    if (!isFinite(octave)) return null
+
+    var adjustedPitchClass = pitchClass + accidentalOffset
+    var canonicalPitchClass = ((adjustedPitchClass % 12) + 12) % 12
+    var canonicalOctave = octave + Math.floor(adjustedPitchClass / 12)
+    if (canonicalOctave < 0 || canonicalOctave > 8) return null
+
+    var midiNumber = (canonicalOctave + 1) * 12 + canonicalPitchClass
+    if (midiNumber < minimumReferenceMidiNumber || midiNumber > maximumReferenceMidiNumber) return null
+    return midiNumber
+  }
+
+  function formatMidiNote(midiNumber, spelling) {
+    var numeric = Math.max(minimumReferenceMidiNumber, Math.min(maximumReferenceMidiNumber, Math.round(finiteNumber(midiNumber, 69))))
+    var pitchClassIndex = ((numeric % 12) + 12) % 12
+    var octave = Math.floor(numeric / 12) - 1
+    var pitchNames = normalizeNoteSpelling(spelling) === "flats" ? flatPitchClasses : sharpPitchClasses
+    return String(pitchNames[pitchClassIndex]) + String(octave)
+  }
+
+  function displayNoteLabel(noteText) {
+    var midiNumber = parseNoteMidiNumber(noteText)
+    return midiNumber === null ? String(noteText || "") : formatMidiNote(midiNumber, noteSpelling)
+  }
+
+  function sameNoteText(left, right) {
+    var leftMidiNumber = parseNoteMidiNumber(left)
+    var rightMidiNumber = parseNoteMidiNumber(right)
+    if (leftMidiNumber === null || rightMidiNumber === null)
+      return String(left || "") === String(right || "")
+
+    return leftMidiNumber === rightMidiNumber
+  }
+
+  function presetById(presetId) {
+    var targetId = String(presetId || "")
+
+    for (var groupIndex = 0; groupIndex < tuningPresetGroups.length; groupIndex++) {
+      var group = tuningPresetGroups[groupIndex]
+      var presets = Array.isArray(group.presets) ? group.presets : []
+
+      for (var presetIndex = 0; presetIndex < presets.length; presetIndex++) {
+        var preset = presets[presetIndex]
+        if (String(preset.id || "") !== targetId) continue
+
+        return {
+          id: String(preset.id || ""),
+          label: String(preset.label || ""),
+          groupLabel: String(group.label || ""),
+          notes: Array.isArray(preset.notes) ? preset.notes : [],
+        }
+      }
+    }
+
+    return {
+      id: "guitar.standard",
+      label: "Standard",
+      groupLabel: "Guitar",
+      notes: ["E2", "A2", "D3", "G3", "B3", "E4"],
+    }
+  }
+
+  function persistedSettingsEntry() {
+    var entry = { id: root.moduleName }
+    var existingSettings = root.settings || ({})
+
+    for (var key in existingSettings)
+      if (key !== "id") entry[key] = existingSettings[key]
+
+    entry.configVersion = 1
+    entry.referenceAHz = normalizeReferenceAHz(referenceAHz)
+    entry.noteSpelling = normalizeNoteSpelling(noteSpelling)
+    entry.selectedPresetId = selectedPresetId
+    entry.selectedReferenceNote = selectedReferenceCommandNoteLabel
+    return entry
+  }
+
+  function persistWidgetSettings() {
+    if (settingsHydrating) return
+
+    var entry = persistedSettingsEntry()
+    root.settings = entry
+
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  function loadPersistedSettings() {
+    var previousReferenceAHz = referenceAHz
+    settingsHydrating = true
+    referenceAHz = normalizeReferenceAHz(root.setting("referenceAHz", 440.0))
+    noteSpelling = normalizeNoteSpelling(root.setting("noteSpelling", "sharps"))
+    selectedPresetId = presetById(root.setting("selectedPresetId", "guitar.standard")).id
+
+    var persistedReferenceNote = String(root.setting("selectedReferenceNote", "A4") || "A4")
+    var selectedMidiNumber = parseNoteMidiNumber(persistedReferenceNote)
+    selectedReferenceMidiNumber = selectedMidiNumber === null ? 69 : selectedMidiNumber
+    settingsHydrating = false
+
+    if (Math.abs(referenceAHz - previousReferenceAHz) >= 0.0001
+        && (helperWanted || helperProcessStarted || helperProc.running)) {
+      queueHelperCommand({ type: "set_reference_a", frequency_hz: referenceAHz })
+    }
+  }
+
+  function setReferenceA(value) {
+    var next = normalizeReferenceAHz(value)
+    if (Math.abs(next - referenceAHz) < 0.0001) return
+
+    referenceAHz = next
+    persistWidgetSettings()
+
+    if (helperWanted || helperProcessStarted || helperProc.running)
+      queueHelperCommand({ type: "set_reference_a", frequency_hz: referenceAHz })
+  }
+
+  function changeReferenceA(delta) {
+    setReferenceA(referenceAHz + finiteNumber(delta, 0))
+  }
+
+  function resetReferenceA() {
+    setReferenceA(440.0)
+  }
+
+  function setNoteSpellingPreference(value) {
+    var next = normalizeNoteSpelling(value)
+    if (next === noteSpelling) return
+
+    noteSpelling = next
+    persistWidgetSettings()
+  }
+
+  function setSelectedReferenceMidiNumber(midiNumber) {
+    var next = Math.max(minimumReferenceMidiNumber, Math.min(maximumReferenceMidiNumber, Math.round(finiteNumber(midiNumber, 69))))
+    if (next === selectedReferenceMidiNumber) return false
+
+    selectedReferenceMidiNumber = next
+    persistWidgetSettings()
+    return true
+  }
+
+  function applySelectedReferenceFromNote(noteText) {
+    var midiNumber = parseNoteMidiNumber(noteText)
+    if (midiNumber === null) return false
+
+    setSelectedReferenceMidiNumber(midiNumber)
+    return true
+  }
+
+  function selectPreset(presetId) {
+    var preset = presetById(presetId)
+    if (preset.id === selectedPresetId) return
+
+    selectedPresetId = preset.id
+    persistWidgetSettings()
+  }
+
   function clearPitchState() {
     signalState = "idle"
     detectedNote = ""
@@ -194,18 +449,6 @@ BarWidget {
   function isInputErrorCode(code) {
     var value = String(code || "")
     return value === "audio_input_unavailable" || value === "audio_input_disconnected"
-  }
-
-  function applySelectedReferenceFromNote(noteText) {
-    var match = /^([A-G](?:#)?)(-?\d+)$/.exec(String(noteText || ""))
-    if (!match) return false
-
-    var octave = parseInt(match[2], 10)
-    if (!isFinite(octave)) return false
-
-    selectedPitchClass = match[1]
-    selectedReferenceOctave = Math.max(0, Math.min(8, octave))
-    return true
   }
 
   function ensureHelperRunning() {
@@ -326,7 +569,7 @@ BarWidget {
   function playSelectedTone() {
     queueHelperCommand({
       type: "play_tone",
-      note: selectedReferenceNoteLabel,
+      note: selectedReferenceCommandNoteLabel,
     })
   }
 
@@ -351,19 +594,17 @@ BarWidget {
     helperProc.write(JSON.stringify({ type: "stop_tone" }) + "\n")
   }
 
-  function selectPitchClass(pitchClass) {
-    var value = String(pitchClass || "")
-    if (pitchClasses.indexOf(value) === -1 || value === selectedPitchClass) return
+  function selectPitchClass(pitchClassIndex) {
+    var numeric = Math.max(0, Math.min(11, Math.round(finiteNumber(pitchClassIndex, selectedReferencePitchClassIndex))))
+    if (!setSelectedReferenceMidiNumber((selectedReferenceOctave + 1) * 12 + numeric)) return
 
-    selectedPitchClass = value
     if (toneActive) playSelectedTone()
   }
 
   function changeReferenceOctave(delta) {
-    var next = Math.max(0, Math.min(8, selectedReferenceOctave + Number(delta || 0)))
-    if (next === selectedReferenceOctave) return
+    var next = Math.max(0, Math.min(8, selectedReferenceOctave + Math.round(finiteNumber(delta, 0))))
+    if (!setSelectedReferenceMidiNumber((next + 1) * 12 + selectedReferencePitchClassIndex)) return
 
-    selectedReferenceOctave = next
     if (toneActive) playSelectedTone()
   }
 
@@ -429,7 +670,7 @@ BarWidget {
     if (message.type === "tone_started") {
       helperState = "active"
       helperReadySeen = true
-      activeToneNote = String(message.note || selectedReferenceNoteLabel)
+      activeToneNote = String(message.note || selectedReferenceCommandNoteLabel)
       activeToneFrequencyHz = Math.max(0, finiteNumber(message.frequency_hz, 0))
       applySelectedReferenceFromNote(activeToneNote)
       if (isOutputErrorCode(runtimeErrorCode)) clearRuntimeError()
@@ -506,7 +747,10 @@ BarWidget {
     }
   }
 
+  Component.onCompleted: loadPersistedSettings()
+
   onBarChanged: injectPopup()
+  onSettingsChanged: loadPersistedSettings()
 
   Loader {
     id: popupLoader

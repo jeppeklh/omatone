@@ -123,6 +123,7 @@ Possible initial codes:
 -   `audio_output_disconnected`
 -   `unsupported_format`
 -   `invalid_note`
+-   `invalid_reference_frequency`
 -   `invalid_command`
 -   `internal_error`
 
@@ -181,20 +182,35 @@ a separate stop command.
 
 Stops current reference-tone playback.
 
-### Future: Set Reference A
+### Set Reference A
 
-The internal architecture should support a configurable reference A, but
-a user-facing control is not required for v0.1.
-
-If exposed later, a command may take a form such as:
+Updates the helper's reference A calibration at runtime.
 
     {
       "type": "set_reference_a",
       "frequency_hz": 442.0
     }
 
-Do not implement this command merely because it is documented as a
-possible extension. Add it when calibration becomes product scope.
+Rules:
+
+-   `frequency_hz` must be numeric;
+-   `frequency_hz` must be finite;
+-   `frequency_hz` must be within `400.0..=480.0` Hz.
+
+When accepted:
+
+-   subsequent pitch messages use the new calibration;
+-   future `play_tone` commands use the new calibration;
+-   if a tone is already active, the helper retunes that same note and
+    emits a fresh `tone_started` confirmation with the new authoritative
+    frequency.
+
+Example:
+
+    {
+      "type": "set_reference_a",
+      "frequency_hz": 442.0
+    }
 
 ## Guitar Shortcuts
 

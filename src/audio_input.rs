@@ -1,5 +1,5 @@
+use crate::config::SharedConfig;
 use crate::note::Note;
-use crate::note::DEFAULT_REFERENCE_A_HZ;
 use crate::pitch_detection::{
     PitchDetector, DEFAULT_ANALYSIS_HOP_SAMPLES, DEFAULT_ANALYSIS_WINDOW_SAMPLES,
     DEFAULT_MAX_FREQUENCY_HZ, DEFAULT_MIN_FREQUENCY_HZ,
@@ -39,9 +39,12 @@ pub struct InputStartupError {
 }
 
 impl AudioInput {
-    pub fn new(protocol_writer: ProtocolWriter) -> Result<Self, InputStartupError> {
+    pub fn new(
+        protocol_writer: ProtocolWriter,
+        shared_config: SharedConfig,
+    ) -> Result<Self, InputStartupError> {
         if let Some(mock_mode) = MockInputMode::from_env()? {
-            return spawn_mock_input_worker(protocol_writer, mock_mode);
+            return spawn_mock_input_worker(protocol_writer, shared_config, mock_mode);
         }
 
         let sample_spec = Spec {
@@ -86,7 +89,7 @@ impl AudioInput {
                 if start_rx.recv().is_err() {
                     return;
                 }
-                input_worker_loop(stream, protocol_writer)
+                input_worker_loop(stream, protocol_writer, shared_config)
             })
             .map_err(|error| {
                 InputStartupError::internal(format!("unable to start microphone worker: {error}"))
@@ -166,6 +169,7 @@ impl MockInputMode {
 
 fn spawn_mock_input_worker(
     protocol_writer: ProtocolWriter,
+    shared_config: SharedConfig,
     mock_mode: MockInputMode,
 ) -> Result<AudioInput, InputStartupError> {
     let (start_tx, start_rx) = mpsc::sync_channel(1);
@@ -175,7 +179,7 @@ fn spawn_mock_input_worker(
             if start_rx.recv().is_err() {
                 return;
             }
-            input_mock_worker_loop(protocol_writer, mock_mode);
+            input_mock_worker_loop(protocol_writer, shared_config, mock_mode);
         })
         .map_err(|error| {
             InputStartupError::internal(format!("unable to start mock microphone worker: {error}"))
@@ -187,7 +191,11 @@ fn spawn_mock_input_worker(
     })
 }
 
-fn input_mock_worker_loop(protocol_writer: ProtocolWriter, mock_mode: MockInputMode) {
+fn input_mock_worker_loop(
+    protocol_writer: ProtocolWriter,
+    shared_config: SharedConfig,
+    mock_mode: MockInputMode,
+) {
     match mock_mode {
         MockInputMode::Idle => park_until_process_exit(),
         MockInputMode::NoSignal => {
@@ -205,7 +213,7 @@ fn input_mock_worker_loop(protocol_writer: ProtocolWriter, mock_mode: MockInputM
             );
         }
         MockInputMode::Pitch(note) => {
-            let Ok(frequency_hz) = note.frequency_hz(DEFAULT_REFERENCE_A_HZ) else {
+            let Ok(frequency_hz) = note.frequency_hz(shared_config.reference_a_hz()) else {
                 emit_runtime_error(
                     &protocol_writer,
                     ErrorCode::InternalError,
@@ -232,7 +240,11 @@ fn park_until_process_exit() {
     }
 }
 
-fn input_worker_loop(stream: psimple::Simple, protocol_writer: ProtocolWriter) {
+fn input_worker_loop(
+    stream: psimple::Simple,
+    protocol_writer: ProtocolWriter,
+    shared_config: SharedConfig,
+) {
     let mut detector = PitchDetector::new(
         DEFAULT_SAMPLE_RATE_HZ,
         DEFAULT_MIN_FREQUENCY_HZ,
@@ -270,9 +282,9 @@ fn input_worker_loop(stream: psimple::Simple, protocol_writer: ProtocolWriter) {
         pending_samples += INPUT_CHUNK_SAMPLES;
         while pending_samples >= DEFAULT_ANALYSIS_HOP_SAMPLES {
             pending_samples -= DEFAULT_ANALYSIS_HOP_SAMPLES;
+            let reference_a_hz = shared_config.reference_a_hz();
 
-            let Some(estimate) = detector.detect_pitch(&analysis_buffer, DEFAULT_REFERENCE_A_HZ)
-            else {
+            let Some(estimate) = detector.detect_pitch(&analysis_buffer, reference_a_hz) else {
                 if last_had_pitch != Some(false) {
                     if let Err(error) = protocol_writer.write_message(&UiMessage::NoSignal) {
                         eprintln!("omatune-helper: failed to emit no-signal message: {error}");
