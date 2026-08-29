@@ -1,11 +1,11 @@
 use crate::config::SharedConfig;
 use crate::metronome::{ActiveMetronome, MetronomeBeat, MetronomeStartError, MetronomeState};
-use crate::note::Note;
+use crate::note::{Note, PitchMathError, TuningModel};
 use crate::protocol::{ErrorCode, ToneVoice, UiMessage};
 use crate::protocol_io::ProtocolWriter;
 use crate::reference_tone::{
-    ReferenceToneScene, ToneGeneratorError, DEFAULT_OUTPUT_LEVEL, DEFAULT_RAMP_DURATION_MS,
-    DEFAULT_SAMPLE_RATE_HZ,
+    ReferenceToneScene, ReferenceToneSceneError, ToneGeneratorError, DEFAULT_OUTPUT_LEVEL,
+    DEFAULT_RAMP_DURATION_MS, DEFAULT_SAMPLE_RATE_HZ,
 };
 use crate::shared_audio::SharedAudioMixer;
 use libpulse_binding as pulse;
@@ -55,7 +55,7 @@ enum PlaybackCommand {
         scene: ReferenceToneScene,
         reply: SyncSender<Result<ActiveTone, OutputControlError>>,
     },
-    RefreshReferenceA {
+    RefreshTuning {
         reply: SyncSender<Result<Option<ActiveTone>, OutputControlError>>,
     },
     Stop {
@@ -136,12 +136,12 @@ impl AudioOutput {
         }
     }
 
-    pub fn refresh_reference_a(&self) -> Result<Option<ActiveTone>, OutputControlError> {
+    pub fn refresh_tuning(&self) -> Result<Option<ActiveTone>, OutputControlError> {
         match &self.inner {
             AudioOutputInner::Worker { command_tx, .. } => {
                 let (reply_tx, reply_rx) = mpsc::sync_channel(1);
                 command_tx
-                    .send(PlaybackCommand::RefreshReferenceA { reply: reply_tx })
+                    .send(PlaybackCommand::RefreshTuning { reply: reply_tx })
                     .map_err(|_| {
                         OutputControlError::disconnected("audio output worker is unavailable")
                     })?;
@@ -153,7 +153,7 @@ impl AudioOutput {
             AudioOutputInner::Mock(mock) => mock
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .refresh_reference_a(),
+                .refresh_tuning(),
         }
     }
 
@@ -253,11 +253,13 @@ impl MockAudioOutputMode {
 
 impl MockPlayback {
     fn play(&mut self, scene: ReferenceToneScene) -> Result<ActiveTone, OutputControlError> {
-        let active_tone = build_active_tone(&scene, self.shared_config.reference_a_hz())?;
+        let tuning_model = self.shared_config.tuning_model();
+        let sounding_scene = resolve_sounding_scene(&scene, tuning_model)?;
+        let active_tone = build_active_tone(&sounding_scene, tuning_model)?;
 
         match self.mode {
             MockAudioOutputMode::Ok => {
-                self.active_scene = Some(scene);
+                self.active_scene = Some(sounding_scene);
                 Ok(active_tone)
             }
             MockAudioOutputMode::Unavailable => Err(OutputControlError::unavailable(
@@ -269,11 +271,11 @@ impl MockPlayback {
         }
     }
 
-    fn refresh_reference_a(&mut self) -> Result<Option<ActiveTone>, OutputControlError> {
+    fn refresh_tuning(&mut self) -> Result<Option<ActiveTone>, OutputControlError> {
         let Some(scene) = self.active_scene.as_ref() else {
             return Ok(None);
         };
-        let active_tone = build_active_tone(scene, self.shared_config.reference_a_hz())?;
+        let active_tone = build_active_tone(scene, self.shared_config.tuning_model())?;
 
         match self.mode {
             MockAudioOutputMode::Ok => Ok(Some(active_tone)),
@@ -355,6 +357,13 @@ impl OutputControlError {
             message: message.into(),
         }
     }
+
+    fn invalid_transposition(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::InvalidTransposition,
+            message: message.into(),
+        }
+    }
 }
 
 struct PulsePlayback {
@@ -414,7 +423,9 @@ impl PulsePlayback {
     }
 
     fn play(&mut self, scene: ReferenceToneScene) -> Result<ActiveTone, OutputControlError> {
-        let active_tone = build_active_tone(&scene, self.shared_config.reference_a_hz())?;
+        let tuning_model = self.shared_config.tuning_model();
+        let sounding_scene = resolve_sounding_scene(&scene, tuning_model)?;
+        let active_tone = build_active_tone(&sounding_scene, tuning_model)?;
 
         self.ensure_stream()?;
         self.mixer
@@ -424,16 +435,16 @@ impl PulsePlayback {
                     "reference-tone generator rejected a valid note frequency",
                 )
             })?;
-        self.active_scene = Some(scene);
+        self.active_scene = Some(sounding_scene);
 
         Ok(active_tone)
     }
 
-    fn refresh_reference_a(&mut self) -> Result<Option<ActiveTone>, OutputControlError> {
+    fn refresh_tuning(&mut self) -> Result<Option<ActiveTone>, OutputControlError> {
         let Some(scene) = self.active_scene.as_ref() else {
             return Ok(None);
         };
-        let active_tone = build_active_tone(scene, self.shared_config.reference_a_hz())?;
+        let active_tone = build_active_tone(scene, self.shared_config.tuning_model())?;
 
         self.ensure_stream()?;
         self.mixer
@@ -622,8 +633,8 @@ fn handle_command(playback: &mut PulsePlayback, command: PlaybackCommand) -> boo
             let _ = reply.send(playback.play(scene));
             true
         }
-        PlaybackCommand::RefreshReferenceA { reply } => {
-            let _ = reply.send(playback.refresh_reference_a());
+        PlaybackCommand::RefreshTuning { reply } => {
+            let _ = reply.send(playback.refresh_tuning());
             true
         }
         PlaybackCommand::Stop { reply } => {
@@ -657,15 +668,21 @@ fn map_metronome_start_error(error: MetronomeStartError) -> OutputControlError {
 
 fn build_active_tone(
     scene: &ReferenceToneScene,
-    reference_a_hz: f64,
+    tuning_model: TuningModel,
 ) -> Result<ActiveTone, OutputControlError> {
     let mut rendered_voices = Vec::with_capacity(1 + scene.intervals_semitones().len());
 
     for note in scene.notes() {
-        let frequency_hz = note.frequency_hz(reference_a_hz).map_err(|error| {
-            OutputControlError::internal(format!("failed to calculate tone frequency: {error}"))
-        })?;
-        rendered_voices.push(ToneVoice { note, frequency_hz });
+        let frequency_hz = tuning_model
+            .frequency_hz_for_sounding_note(note)
+            .map_err(|error| map_tone_math_error(error, note, tuning_model))?;
+        let displayed_note = tuning_model
+            .displayed_note_for_sounding_note(note)
+            .map_err(|error| map_tone_math_error(error, note, tuning_model))?;
+        rendered_voices.push(ToneVoice {
+            note: displayed_note,
+            frequency_hz,
+        });
     }
 
     let root_voice = rendered_voices
@@ -684,6 +701,60 @@ fn build_active_tone(
         intervals_semitones: scene.intervals_semitones().to_vec(),
         voices: protocol_voices,
     })
+}
+
+fn resolve_sounding_scene(
+    displayed_scene: &ReferenceToneScene,
+    tuning_model: TuningModel,
+) -> Result<ReferenceToneScene, OutputControlError> {
+    let sounding_root_note = tuning_model
+        .sounding_note_for_displayed_note(displayed_scene.root_note())
+        .map_err(|error| map_tone_math_error(error, displayed_scene.root_note(), tuning_model))?;
+
+    ReferenceToneScene::new(
+        sounding_root_note,
+        displayed_scene.intervals_semitones().to_vec(),
+    )
+    .map_err(|error| map_scene_resolution_error(error, displayed_scene.root_note(), tuning_model))
+}
+
+fn map_scene_resolution_error(
+    error: ReferenceToneSceneError,
+    note: Note,
+    tuning_model: TuningModel,
+) -> OutputControlError {
+    match error {
+        ReferenceToneSceneError::OutOfSupportedRange { .. } => {
+            OutputControlError::invalid_transposition(format!(
+                "note {note} with its interval shape is outside the supported sounding range for transposition {} semitones",
+                tuning_model.transposition_semitones()
+            ))
+        }
+        ReferenceToneSceneError::TooManyIntervals(_)
+        | ReferenceToneSceneError::InvalidInterval(_)
+        | ReferenceToneSceneError::DuplicateInterval(_) => {
+            OutputControlError::internal(format!("failed to resolve reference tone scene: {error}"))
+        }
+    }
+}
+
+fn map_tone_math_error(
+    error: PitchMathError,
+    note: Note,
+    tuning_model: TuningModel,
+) -> OutputControlError {
+    match error {
+        PitchMathError::OutOfSupportedRange => OutputControlError::invalid_transposition(format!(
+            "note {note} is outside the supported sounding range for transposition {} semitones",
+            tuning_model.transposition_semitones()
+        )),
+        PitchMathError::InvalidReferenceFrequency => OutputControlError::internal(
+            "failed to calculate tone frequency for the current reference A value",
+        ),
+        PitchMathError::InvalidFrequency => {
+            OutputControlError::internal("failed to calculate tone frequency for the current note")
+        }
+    }
 }
 
 fn generator_voices(active_tone: &ActiveTone) -> Vec<(Note, f64)> {

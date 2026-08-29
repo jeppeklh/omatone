@@ -37,6 +37,8 @@ Supported flags:
 
 -   `--reference-a-hz <hz>` sets startup calibration within
     `400.0..=480.0` Hz;
+-   `--transposition-semitones <n>` sets startup note transposition
+    within `-12..=12` semitones;
 -   `-h`, `--help` print usage text and exit without starting audio;
 -   `-V`, `--version` print the helper version and exit without starting
     audio.
@@ -70,7 +72,8 @@ Emitted when the helper has a usable pitch estimate.
 Fields:
 
 -   `type`: always `pitch`
--   `note`: nearest equal-tempered note name including octave
+-   `note`: nearest note name including octave after the current
+    transposition is applied; `0` means concert pitch
 -   `frequency_hz`: detected fundamental frequency in Hz
 -   `cents`: signed deviation from the nearest note; negative is flat
     and positive is sharp
@@ -132,11 +135,14 @@ remains in use, with additive fields:
 Rules:
 
 -   `note` and `frequency_hz` remain the root voice of the active
-    playback scene;
+    playback scene, with `note` expressed after the active transposition
+    is applied and `frequency_hz` remaining the actual generated
+    sounding frequency;
 -   `intervals_semitones`, when present, echoes the extra interval notes
     above the root;
 -   `voices`, when present, lists every note actually being generated in
-    root-first order with authoritative frequencies;
+    root-first order with note labels in the current transposition space
+    and authoritative sounding frequencies;
 -   single-note playback may omit `intervals_semitones` and `voices` to
     preserve the compact v0.1 message shape.
 
@@ -237,6 +243,7 @@ Possible initial codes:
 -   `unsupported_format`
 -   `invalid_note`
 -   `invalid_reference_frequency`
+-   `invalid_transposition`
 -   `invalid_metronome_bpm`
 -   `invalid_metronome_meter`
 -   `invalid_metronome_subdivision`
@@ -273,6 +280,10 @@ the selected note:
     }
 
 The helper calculates the frequency using the current reference A value.
+
+When transposition is non-zero, the incoming `note` is interpreted in
+that transposed note space. The generated frequency still corresponds to
+the underlying sounding pitch.
 
 For v0.1 the default reference is A4 = 440 Hz.
 
@@ -352,6 +363,37 @@ Updates the helper's reference A calibration at runtime.
       "type": "set_reference_a",
       "frequency_hz": 442.0
     }
+
+### Set Transposition
+
+Updates the helper's note-name transposition at runtime.
+
+    {
+      "type": "set_transposition",
+      "semitones": 2
+    }
+
+Rules:
+
+-   `semitones` must be an integer;
+-   `semitones` must be within `-12..=12`.
+
+Semantics:
+
+-   `0` means concert pitch;
+-   positive values shift displayed/selected note names upward relative
+    to sounding pitch;
+-   the helper applies the same setting to pitch messages and
+    reference-tone confirmations.
+
+When accepted:
+
+-   subsequent pitch messages use the new transposed note labels;
+-   future `play_tone` commands interpret their `note` field in the new
+    transposed note space;
+-   if a tone is already active, the helper keeps the sounding frequency
+    consistent and emits a fresh `tone_started` confirmation with the new
+    note labels.
 
 Rules:
 

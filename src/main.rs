@@ -4,6 +4,7 @@ use omatune::config::{
     parse_helper_cli, HelperCliAction, SharedConfig, StartupConfig, StartupConfigError,
     MAX_REFERENCE_A_HZ, MIN_REFERENCE_A_HZ,
 };
+use omatune::note::{MAX_TRANSPOSITION_SEMITONES, MIN_TRANSPOSITION_SEMITONES};
 use omatune::protocol::{parse_command, Command, ErrorCode, UiMessage};
 use omatune::protocol_io::ProtocolWriter;
 use std::io::{self, BufRead, Write};
@@ -39,13 +40,7 @@ fn run() -> io::Result<()> {
 
 fn run_helper(startup_config: StartupConfig) -> io::Result<()> {
     let protocol_writer = ProtocolWriter::new();
-    let shared_config = SharedConfig::new(startup_config.reference_a_hz).map_err(|error| {
-        emit_startup_error_message(
-            &protocol_writer,
-            ErrorCode::InvalidReferenceFrequency,
-            error.to_string(),
-        )
-    })?;
+    let shared_config = SharedConfig::new(startup_config);
     let audio_output = AudioOutput::new(protocol_writer.clone(), shared_config.clone())?;
     let mut audio_input = init_audio_input(&protocol_writer, shared_config.clone())?;
 
@@ -74,7 +69,7 @@ fn run_helper(startup_config: StartupConfig) -> io::Result<()> {
 
 fn print_help() {
     println!(
-        "Usage: omatune-helper [--reference-a-hz <hz>] [--help] [--version]\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>  Set startup calibration within {MIN_REFERENCE_A_HZ:.1}..={MAX_REFERENCE_A_HZ:.1} Hz\n  -h, --help             Print this help text and exit\n  -V, --version          Print helper version and exit"
+        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--help] [--version]\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within {MIN_REFERENCE_A_HZ:.1}..={MAX_REFERENCE_A_HZ:.1} Hz\n  --transposition-semitones <n>  Set startup transposition within {MIN_TRANSPOSITION_SEMITONES}..={MAX_TRANSPOSITION_SEMITONES} semitones\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit"
     );
 }
 
@@ -117,7 +112,31 @@ fn handle_command(
                     )
                 })?;
 
-            match audio_output.refresh_reference_a() {
+            match audio_output.refresh_tuning() {
+                Ok(Some(active_tone)) => {
+                    protocol_writer.write_message(&UiMessage::ToneStarted {
+                        note: active_tone.note,
+                        frequency_hz: active_tone.frequency_hz,
+                        intervals_semitones: active_tone.intervals_semitones,
+                        voices: active_tone.voices,
+                    })?
+                }
+                Ok(None) => {}
+                Err(error) => emit_control_error(protocol_writer, error)?,
+            }
+        }
+        Command::SetTransposition { semitones } => {
+            shared_config
+                .set_transposition_semitones(semitones)
+                .map_err(|error| {
+                    emit_startup_error_message(
+                        protocol_writer,
+                        ErrorCode::InvalidTransposition,
+                        error.to_string(),
+                    )
+                })?;
+
+            match audio_output.refresh_tuning() {
                 Ok(Some(active_tone)) => {
                     protocol_writer.write_message(&UiMessage::ToneStarted {
                         note: active_tone.note,
@@ -185,6 +204,7 @@ fn emit_startup_protocol_error(
         StartupConfigError::MissingValue(_) | StartupConfigError::InvalidReferenceFrequency(_) => {
             ErrorCode::InvalidReferenceFrequency
         }
+        StartupConfigError::InvalidTransposition(_) => ErrorCode::InvalidTransposition,
         StartupConfigError::UnexpectedArgument(_) => ErrorCode::InvalidCommand,
     };
 

@@ -1,4 +1,4 @@
-use crate::note::{nearest_note_for_frequency, Note};
+use crate::note::{Note, TuningModel};
 
 pub const DEFAULT_ANALYSIS_WINDOW_SAMPLES: usize = 4_800;
 pub const DEFAULT_ANALYSIS_HOP_SAMPLES: usize = 2_048;
@@ -55,6 +55,7 @@ pub struct PitchDetector {
     unreliable_frames: usize,
     previous_level_rms: f64,
     last_reference_a_hz: Option<f64>,
+    last_transposition_semitones: Option<i32>,
 }
 
 impl PitchDetector {
@@ -91,12 +92,17 @@ impl PitchDetector {
             unreliable_frames: 0,
             previous_level_rms: 0.0,
             last_reference_a_hz: None,
+            last_transposition_semitones: None,
         }
     }
 
-    pub fn detect_pitch(&mut self, frame: &[f32], reference_a_hz: f64) -> Option<PitchEstimate> {
+    pub fn detect_pitch(
+        &mut self,
+        frame: &[f32],
+        tuning_model: TuningModel,
+    ) -> Option<PitchEstimate> {
         let frame = frame.get(frame.len().checked_sub(self.window_size)?..)?;
-        self.reset_for_reference_change(reference_a_hz);
+        self.reset_for_tuning_change(tuning_model);
 
         let level_rms = centered_rms(frame);
         if self.is_silent(level_rms) {
@@ -105,16 +111,22 @@ impl PitchDetector {
             return None;
         }
 
-        let raw_estimate = self.detect_raw_pitch(frame, reference_a_hz);
+        let raw_estimate = self.detect_raw_pitch(frame, tuning_model);
         let output_estimate = self.update_tracking(raw_estimate, level_rms);
         self.previous_level_rms = level_rms;
 
         output_estimate
     }
 
-    fn detect_raw_pitch(&mut self, frame: &[f32], reference_a_hz: f64) -> Option<PitchEstimate> {
+    fn detect_raw_pitch(
+        &mut self,
+        frame: &[f32],
+        tuning_model: TuningModel,
+    ) -> Option<PitchEstimate> {
         let raw_estimate = self.detect_raw_estimate(frame)?;
-        let nearest = nearest_note_for_frequency(raw_estimate.frequency_hz, reference_a_hz).ok()?;
+        let nearest = tuning_model
+            .nearest_displayed_note_for_frequency(raw_estimate.frequency_hz)
+            .ok()?;
 
         Some(PitchEstimate {
             note: nearest.note,
@@ -253,14 +265,22 @@ impl PitchDetector {
         self.unreliable_frames = 0;
     }
 
-    fn reset_for_reference_change(&mut self, reference_a_hz: f64) {
+    fn reset_for_tuning_change(&mut self, tuning_model: TuningModel) {
         if let Some(last_reference_a_hz) = self.last_reference_a_hz {
-            if (last_reference_a_hz - reference_a_hz).abs() >= REFERENCE_A_CHANGE_EPSILON {
+            if (last_reference_a_hz - tuning_model.reference_a_hz()).abs()
+                >= REFERENCE_A_CHANGE_EPSILON
+            {
+                self.clear_tracking();
+            }
+        }
+        if let Some(last_transposition_semitones) = self.last_transposition_semitones {
+            if last_transposition_semitones != tuning_model.transposition_semitones() {
                 self.clear_tracking();
             }
         }
 
-        self.last_reference_a_hz = Some(reference_a_hz);
+        self.last_reference_a_hz = Some(tuning_model.reference_a_hz());
+        self.last_transposition_semitones = Some(tuning_model.transposition_semitones());
     }
 
     fn is_silent(&self, level_rms: f64) -> bool {
@@ -385,7 +405,7 @@ mod tests {
         PitchDetector, PitchEstimate, DEFAULT_ANALYSIS_WINDOW_SAMPLES, DEFAULT_MAX_FREQUENCY_HZ,
         DEFAULT_MIN_FREQUENCY_HZ,
     };
-    use crate::note::DEFAULT_REFERENCE_A_HZ;
+    use crate::note::{TuningModel, DEFAULT_REFERENCE_A_HZ};
     use crate::reference_tone::DEFAULT_SAMPLE_RATE_HZ;
 
     fn assert_close(actual: f64, expected: f64, tolerance: f64) {
@@ -412,10 +432,15 @@ mod tests {
     }
 
     fn detect_locked_pitch(detector: &mut PitchDetector, frame: &[f32]) -> PitchEstimate {
+        let tuning_model = TuningModel::new(DEFAULT_REFERENCE_A_HZ, 0).unwrap();
         detector
-            .detect_pitch(frame, DEFAULT_REFERENCE_A_HZ)
-            .or_else(|| detector.detect_pitch(frame, DEFAULT_REFERENCE_A_HZ))
+            .detect_pitch(frame, tuning_model)
+            .or_else(|| detector.detect_pitch(frame, tuning_model))
             .expect("expected pitch estimate after stabilization")
+    }
+
+    fn default_tuning_model() -> TuningModel {
+        TuningModel::new(DEFAULT_REFERENCE_A_HZ, 0).unwrap()
     }
 
     fn generate_harmonic_wave(
@@ -509,7 +534,7 @@ mod tests {
         );
 
         let estimate = detector
-            .detect_pitch(&frame, DEFAULT_REFERENCE_A_HZ)
+            .detect_pitch(&frame, default_tuning_model())
             .unwrap();
         assert_eq!(estimate.note.to_string(), "A4");
         assert_close(estimate.cents, 12.0, 1.0);
@@ -525,7 +550,7 @@ mod tests {
 
         let silence = vec![0.0; DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2];
         assert!(detector
-            .detect_pitch(&silence, DEFAULT_REFERENCE_A_HZ)
+            .detect_pitch(&silence, default_tuning_model())
             .is_none());
 
         let weak_signal = generate_sine_wave(
@@ -535,7 +560,7 @@ mod tests {
             0.001,
         );
         assert!(detector
-            .detect_pitch(&weak_signal, DEFAULT_REFERENCE_A_HZ)
+            .detect_pitch(&weak_signal, default_tuning_model())
             .is_none());
     }
 
@@ -579,14 +604,14 @@ mod tests {
         );
         let noise = generate_noise(DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2, 0.35);
         assert!(detector
-            .detect_pitch(&noise, DEFAULT_REFERENCE_A_HZ)
+            .detect_pitch(&noise, default_tuning_model())
             .is_none());
 
         let mut impulse = vec![0.0; DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2];
         let impulse_index = impulse.len() - 24;
         impulse[impulse_index] = 1.0;
         assert!(detector
-            .detect_pitch(&impulse, DEFAULT_REFERENCE_A_HZ)
+            .detect_pitch(&impulse, default_tuning_model())
             .is_none());
     }
 
@@ -613,14 +638,14 @@ mod tests {
         );
         assert_eq!(
             detector
-                .detect_pitch(&noisy_frame, DEFAULT_REFERENCE_A_HZ)
+                .detect_pitch(&noisy_frame, default_tuning_model())
                 .unwrap()
                 .note
                 .to_string(),
             "A2"
         );
         assert!(detector
-            .detect_pitch(&noisy_frame, DEFAULT_REFERENCE_A_HZ)
+            .detect_pitch(&noisy_frame, default_tuning_model())
             .is_none());
     }
 
@@ -652,12 +677,12 @@ mod tests {
         );
 
         let held = detector
-            .detect_pitch(&a1_frame, DEFAULT_REFERENCE_A_HZ)
+            .detect_pitch(&a1_frame, default_tuning_model())
             .unwrap();
         assert_eq!(held.note.to_string(), "A2");
 
         let switched = detector
-            .detect_pitch(&a1_frame, DEFAULT_REFERENCE_A_HZ)
+            .detect_pitch(&a1_frame, default_tuning_model())
             .unwrap();
         assert_eq!(switched.note.to_string(), "A1");
     }

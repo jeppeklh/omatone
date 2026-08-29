@@ -4,8 +4,11 @@ use std::fmt;
 use std::str::FromStr;
 
 pub const DEFAULT_REFERENCE_A_HZ: f64 = 440.0;
+pub const DEFAULT_TRANSPOSITION_SEMITONES: i32 = 0;
 pub const MIN_OCTAVE: i32 = 0;
 pub const MAX_OCTAVE: i32 = 8;
+pub const MIN_TRANSPOSITION_SEMITONES: i32 = -12;
+pub const MAX_TRANSPOSITION_SEMITONES: i32 = 12;
 
 const SEMITONES_PER_OCTAVE: i32 = 12;
 const A4_MIDI_NUMBER: i32 = 69;
@@ -27,11 +30,22 @@ pub struct NearestNote {
     pub cents: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TuningModel {
+    reference_a_hz: f64,
+    transposition_semitones: i32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PitchMathError {
     InvalidFrequency,
     InvalidReferenceFrequency,
     OutOfSupportedRange,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TranspositionError {
+    OutOfRange,
 }
 
 impl fmt::Display for PitchMathError {
@@ -54,6 +68,19 @@ impl fmt::Display for PitchMathError {
 }
 
 impl Error for PitchMathError {}
+
+impl fmt::Display for TranspositionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TranspositionError::OutOfRange => write!(
+                f,
+                "transposition must be within {MIN_TRANSPOSITION_SEMITONES}..={MAX_TRANSPOSITION_SEMITONES} semitones"
+            ),
+        }
+    }
+}
+
+impl Error for TranspositionError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NoteParseError {
@@ -100,6 +127,15 @@ impl Note {
 
     pub fn midi_number(self) -> i32 {
         self.midi_number
+    }
+
+    pub fn transposed(self, semitones: i32) -> Result<Self, PitchMathError> {
+        let midi_number = self
+            .midi_number
+            .checked_add(semitones)
+            .ok_or(PitchMathError::OutOfSupportedRange)?;
+
+        Self::from_midi_number(midi_number).ok_or(PitchMathError::OutOfSupportedRange)
     }
 
     pub fn frequency_hz(self, reference_a_hz: f64) -> Result<f64, PitchMathError> {
@@ -185,6 +221,83 @@ impl FromStr for Note {
     }
 }
 
+impl TuningModel {
+    pub fn new(
+        reference_a_hz: f64,
+        transposition_semitones: i32,
+    ) -> Result<Self, TranspositionError> {
+        Ok(Self {
+            reference_a_hz,
+            transposition_semitones: validate_transposition_semitones(transposition_semitones)?,
+        })
+    }
+
+    pub fn reference_a_hz(self) -> f64 {
+        self.reference_a_hz
+    }
+
+    pub fn transposition_semitones(self) -> i32 {
+        self.transposition_semitones
+    }
+
+    pub fn sounding_note_for_displayed_note(
+        self,
+        displayed_note: Note,
+    ) -> Result<Note, PitchMathError> {
+        displayed_note.transposed(-self.transposition_semitones)
+    }
+
+    pub fn displayed_note_for_sounding_note(
+        self,
+        sounding_note: Note,
+    ) -> Result<Note, PitchMathError> {
+        sounding_note.transposed(self.transposition_semitones)
+    }
+
+    pub fn frequency_hz_for_sounding_note(
+        self,
+        sounding_note: Note,
+    ) -> Result<f64, PitchMathError> {
+        sounding_note.frequency_hz(self.reference_a_hz)
+    }
+
+    pub fn frequency_hz_for_displayed_note(
+        self,
+        displayed_note: Note,
+    ) -> Result<f64, PitchMathError> {
+        self.sounding_note_for_displayed_note(displayed_note)?
+            .frequency_hz(self.reference_a_hz)
+    }
+
+    pub fn nearest_displayed_note_for_frequency(
+        self,
+        frequency_hz: f64,
+    ) -> Result<NearestNote, PitchMathError> {
+        let nearest_sounding = nearest_note_for_frequency(frequency_hz, self.reference_a_hz)?;
+        let displayed_note = self.displayed_note_for_sounding_note(nearest_sounding.note)?;
+        let reference_frequency_hz = self.frequency_hz_for_displayed_note(displayed_note)?;
+        let cents = cents_between(frequency_hz, reference_frequency_hz)?;
+
+        Ok(NearestNote {
+            note: displayed_note,
+            reference_frequency_hz,
+            cents,
+        })
+    }
+}
+
+pub fn validate_transposition_semitones(
+    transposition_semitones: i32,
+) -> Result<i32, TranspositionError> {
+    if !(MIN_TRANSPOSITION_SEMITONES..=MAX_TRANSPOSITION_SEMITONES)
+        .contains(&transposition_semitones)
+    {
+        return Err(TranspositionError::OutOfRange);
+    }
+
+    Ok(transposition_semitones)
+}
+
 pub fn cents_between(
     frequency_hz: f64,
     reference_frequency_hz: f64,
@@ -230,8 +343,8 @@ fn is_positive_finite(value: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        cents_between, nearest_note_for_frequency, Note, NoteParseError, PitchMathError,
-        DEFAULT_REFERENCE_A_HZ,
+        cents_between, nearest_note_for_frequency, validate_transposition_semitones, Note,
+        NoteParseError, PitchMathError, TranspositionError, TuningModel, DEFAULT_REFERENCE_A_HZ,
     };
 
     fn assert_close(actual: f64, expected: f64, tolerance: f64) {
@@ -313,6 +426,44 @@ mod tests {
     }
 
     #[test]
+    fn transposes_notes_within_supported_range() {
+        assert_eq!(
+            "A4".parse::<Note>()
+                .unwrap()
+                .transposed(2)
+                .unwrap()
+                .to_string(),
+            "B4"
+        );
+        assert_eq!(
+            "C4".parse::<Note>()
+                .unwrap()
+                .transposed(-2)
+                .unwrap()
+                .to_string(),
+            "A#3"
+        );
+        assert_eq!(
+            "B8".parse::<Note>().unwrap().transposed(1).unwrap_err(),
+            PitchMathError::OutOfSupportedRange
+        );
+    }
+
+    #[test]
+    fn validates_supported_transposition_range() {
+        assert_eq!(validate_transposition_semitones(0).unwrap(), 0);
+        assert_eq!(validate_transposition_semitones(12).unwrap(), 12);
+        assert_eq!(
+            validate_transposition_semitones(13).unwrap_err(),
+            TranspositionError::OutOfRange
+        );
+        assert_eq!(
+            validate_transposition_semitones(-13).unwrap_err(),
+            TranspositionError::OutOfRange
+        );
+    }
+
+    #[test]
     fn calculates_standard_guitar_frequencies_through_general_note_model() {
         assert_close(
             "E2".parse::<Note>()
@@ -372,6 +523,42 @@ mod tests {
         let nearest = nearest_note_for_frequency(calibrated_e2, calibrated_reference_a_hz).unwrap();
         assert_eq!(nearest.note.to_string(), "E2");
         assert_close(nearest.reference_frequency_hz, calibrated_e2, 0.0001);
+        assert_close(nearest.cents, 0.0, 0.0001);
+    }
+
+    #[test]
+    fn transposed_tuning_model_maps_detected_and_reference_notes_consistently() {
+        let tuning = TuningModel::new(DEFAULT_REFERENCE_A_HZ, 2).unwrap();
+        let displayed_c4 = "C4".parse::<Note>().unwrap();
+        let sounding_a_sharp3 = "A#3".parse::<Note>().unwrap();
+        let sounding_frequency_hz = sounding_a_sharp3
+            .frequency_hz(DEFAULT_REFERENCE_A_HZ)
+            .unwrap();
+
+        assert_eq!(
+            tuning
+                .sounding_note_for_displayed_note(displayed_c4)
+                .unwrap()
+                .to_string(),
+            "A#3"
+        );
+        assert_close(
+            tuning
+                .frequency_hz_for_displayed_note(displayed_c4)
+                .unwrap(),
+            sounding_frequency_hz,
+            0.0001,
+        );
+
+        let nearest = tuning
+            .nearest_displayed_note_for_frequency(sounding_frequency_hz)
+            .unwrap();
+        assert_eq!(nearest.note.to_string(), "C4");
+        assert_close(
+            nearest.reference_frequency_hz,
+            sounding_frequency_hz,
+            0.0001,
+        );
         assert_close(nearest.cents, 0.0, 0.0001);
     }
 

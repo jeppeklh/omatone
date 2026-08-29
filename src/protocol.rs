@@ -3,7 +3,7 @@ use crate::metronome::{
     validate_metronome_bpm, MetronomeState, MetronomeStateError, DEFAULT_METRONOME_BEATS_PER_BAR,
     DEFAULT_METRONOME_BEAT_UNIT, DEFAULT_METRONOME_SUBDIVISION,
 };
-use crate::note::Note;
+use crate::note::{validate_transposition_semitones, Note};
 use crate::reference_tone::ReferenceToneScene;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -13,6 +13,7 @@ use std::fmt;
 pub enum Command {
     PlayTone { scene: ReferenceToneScene },
     SetReferenceA { frequency_hz: f64 },
+    SetTransposition { semitones: i32 },
     StopTone,
     StartMetronome { state: MetronomeState },
     StopMetronome,
@@ -34,6 +35,7 @@ pub enum ErrorCode {
     UnsupportedFormat,
     InvalidNote,
     InvalidReferenceFrequency,
+    InvalidTransposition,
     InvalidMetronomeBpm,
     InvalidMetronomeMeter,
     InvalidMetronomeSubdivision,
@@ -95,6 +97,7 @@ pub enum CommandParseError {
     InvalidCommand(String),
     InvalidNote(String),
     InvalidReferenceFrequency(String),
+    InvalidTransposition(String),
     InvalidMetronomeBpm(String),
     InvalidMetronomeMeter(String),
     InvalidMetronomeSubdivision(String),
@@ -105,6 +108,7 @@ impl CommandParseError {
         match self {
             CommandParseError::InvalidNote(_) => ErrorCode::InvalidNote,
             CommandParseError::InvalidReferenceFrequency(_) => ErrorCode::InvalidReferenceFrequency,
+            CommandParseError::InvalidTransposition(_) => ErrorCode::InvalidTransposition,
             CommandParseError::InvalidMetronomeBpm(_) => ErrorCode::InvalidMetronomeBpm,
             CommandParseError::InvalidMetronomeMeter(_) => ErrorCode::InvalidMetronomeMeter,
             CommandParseError::InvalidMetronomeSubdivision(_) => {
@@ -135,6 +139,9 @@ impl fmt::Display for CommandParseError {
             CommandParseError::InvalidReferenceFrequency(error) => {
                 write!(f, "invalid reference A frequency: {error}")
             }
+            CommandParseError::InvalidTransposition(error) => {
+                write!(f, "invalid transposition: {error}")
+            }
             CommandParseError::InvalidMetronomeBpm(error) => {
                 write!(f, "invalid metronome BPM: {error}")
             }
@@ -164,6 +171,7 @@ pub fn parse_command(input: &str) -> Result<Command, CommandParseError> {
     match command_type {
         "play_tone" => parse_play_tone(object),
         "set_reference_a" => parse_set_reference_a(object),
+        "set_transposition" => parse_set_transposition(object),
         "stop_tone" => Ok(Command::StopTone),
         "start_metronome" => parse_start_metronome(object),
         "stop_metronome" => Ok(Command::StopMetronome),
@@ -230,6 +238,28 @@ fn parse_set_reference_a(object: &Map<String, Value>) -> Result<Command, Command
         .map_err(|error| CommandParseError::InvalidReferenceFrequency(error.to_string()))?;
 
     Ok(Command::SetReferenceA { frequency_hz })
+}
+
+fn parse_set_transposition(object: &Map<String, Value>) -> Result<Command, CommandParseError> {
+    let semitones = object
+        .get("semitones")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| {
+            CommandParseError::InvalidCommand(
+                "set_transposition requires integer field 'semitones'".to_owned(),
+            )
+        })?;
+
+    let semitones = i32::try_from(semitones).map_err(|_| {
+        CommandParseError::InvalidTransposition(
+            "transposition is outside the supported integer range".to_owned(),
+        )
+    })?;
+
+    let semitones = validate_transposition_semitones(semitones)
+        .map_err(|error| CommandParseError::InvalidTransposition(error.to_string()))?;
+
+    Ok(Command::SetTransposition { semitones })
 }
 
 fn parse_start_metronome(object: &Map<String, Value>) -> Result<Command, CommandParseError> {
@@ -385,6 +415,10 @@ mod tests {
                 frequency_hz: 442.0,
             }
         );
+        assert_eq!(
+            parse_command(r#"{"type":"set_transposition","semitones":2}"#).unwrap(),
+            Command::SetTransposition { semitones: 2 }
+        );
     }
 
     #[test]
@@ -443,6 +477,24 @@ mod tests {
             parse_command(r#"{"type":"set_reference_a","frequency_hz":399.0}"#).unwrap_err(),
             CommandParseError::InvalidReferenceFrequency(
                 "reference A frequency must be within 400.0..=480.0 Hz".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"set_transposition"}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "set_transposition requires integer field 'semitones'".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"set_transposition","semitones":2.5}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "set_transposition requires integer field 'semitones'".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"set_transposition","semitones":13}"#).unwrap_err(),
+            CommandParseError::InvalidTransposition(
+                "transposition must be within -12..=12 semitones".to_owned()
             )
         );
         assert_eq!(
@@ -567,6 +619,10 @@ mod tests {
         assert_eq!(
             CommandParseError::InvalidReferenceFrequency("bad".to_owned()).code(),
             ErrorCode::InvalidReferenceFrequency
+        );
+        assert_eq!(
+            CommandParseError::InvalidTransposition("bad".to_owned()).code(),
+            ErrorCode::InvalidTransposition
         );
         assert_eq!(
             CommandParseError::InvalidMetronomeBpm("bad".to_owned()).code(),

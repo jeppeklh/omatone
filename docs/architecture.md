@@ -24,6 +24,9 @@ Owns:
 -   tuner activation/deactivation;
 -   user interaction for note selection and guitar shortcuts;
 -   persisted calibration, spelling, and tuning-preset preferences;
+-   persisted transposition preferences for advanced tuning workflows;
+-   persisted quick-switch favorites and recent workflow snapshots over
+    existing tuner state;
 -   persisted metronome BPM, meter, and subdivision preferences;
 -   persisted popup-layout and display-accessibility preferences;
 -   helper process lifecycle from the UI side;
@@ -42,6 +45,7 @@ Owns:
 -   pitch detection and confidence estimation;
 -   note parsing, normalization, and note/frequency math;
 -   validated helper-side reference A configuration;
+-   helper-owned transposition-aware target-note interpretation;
 -   silence and weak-signal rejection;
 -   helper protocol I/O;
 -   audio-related error handling.

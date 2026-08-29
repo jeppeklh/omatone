@@ -231,7 +231,8 @@ fn input_mock_worker_loop(
             std::process::exit(code);
         }
         MockInputMode::Pitch(note) => {
-            let Ok(frequency_hz) = note.frequency_hz(shared_config.reference_a_hz()) else {
+            let tuning_model = shared_config.tuning_model();
+            let Ok(frequency_hz) = note.frequency_hz(tuning_model.reference_a_hz()) else {
                 emit_runtime_error(
                     &protocol_writer,
                     ErrorCode::InternalError,
@@ -239,10 +240,19 @@ fn input_mock_worker_loop(
                 );
                 return;
             };
+            let Ok(nearest) = tuning_model.nearest_displayed_note_for_frequency(frequency_hz)
+            else {
+                emit_runtime_error(
+                    &protocol_writer,
+                    ErrorCode::InternalError,
+                    "failed to map simulated pitch through the active tuning model".to_owned(),
+                );
+                return;
+            };
             if let Err(error) = protocol_writer.write_message(&UiMessage::Pitch {
-                note,
+                note: nearest.note,
                 frequency_hz,
-                cents: 0.0,
+                cents: nearest.cents,
                 confidence: Some(1.0),
             }) {
                 eprintln!("omatune-helper: failed to emit mock pitch message: {error}");
@@ -358,9 +368,9 @@ fn emit_detector_update(
     protocol_writer: &ProtocolWriter,
     last_had_pitch: &mut Option<bool>,
 ) {
-    let reference_a_hz = shared_config.reference_a_hz();
+    let tuning_model = shared_config.tuning_model();
 
-    let Some(estimate) = detector.detect_pitch(analysis_buffer, reference_a_hz) else {
+    let Some(estimate) = detector.detect_pitch(analysis_buffer, tuning_model) else {
         if *last_had_pitch != Some(false) {
             if let Err(error) = protocol_writer.write_message(&UiMessage::NoSignal) {
                 eprintln!("omatune-helper: failed to emit no-signal message: {error}");

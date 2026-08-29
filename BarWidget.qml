@@ -41,6 +41,7 @@ BarWidget {
   property int metronomeSubdivisionStep: 0
   property bool metronomeBeatAccented: false
   property real referenceAHz: 440.0
+  property int transpositionSemitones: 0
   property string noteSpelling: "sharps"
   property string selectedPresetId: "guitar.standard"
   property int selectedReferenceMidiNumber: 69
@@ -56,14 +57,20 @@ BarWidget {
   property string lastStderrLine: ""
   property int lastExitCode: 0
   property var metronomeTapTimes: []
+  property var favoriteQuickSwitches: []
+  property var recentQuickSwitches: []
 
   readonly property int minimumReferenceMidiNumber: 12
   readonly property int maximumReferenceMidiNumber: 119
   readonly property real minimumReferenceAHz: 400.0
   readonly property real maximumReferenceAHz: 480.0
+  readonly property int minimumTranspositionSemitones: -12
+  readonly property int maximumTranspositionSemitones: 12
   readonly property int minimumMetronomeBpm: 20
   readonly property int maximumMetronomeBpm: 300
   readonly property int maximumReferenceIntervalSemitones: 24
+  readonly property int maximumFavoriteQuickSwitches: 6
+  readonly property int maximumRecentQuickSwitches: 6
   readonly property int settingsConfigVersion: 1
   readonly property int helperRecoveryMaxAttempts: 5
   readonly property int defaultMetronomeBpm: 100
@@ -88,6 +95,12 @@ BarWidget {
   readonly property var sharpPitchClasses: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
   readonly property var flatPitchClasses: ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
   readonly property var pitchClasses: noteSpelling === "flats" ? flatPitchClasses : sharpPitchClasses
+  readonly property var transpositionPresets: [
+    { semitones: 0, label: "Concert" },
+    { semitones: 2, label: "Bb" },
+    { semitones: 7, label: "F" },
+    { semitones: 9, label: "Eb" },
+  ]
   readonly property var referencePlaybackModes: ["single", "drone", "chord"]
   readonly property var referenceIntervalPresets: [
     { semitones: 3, label: "m3" },
@@ -140,12 +153,20 @@ BarWidget {
   readonly property bool hasAlert: helperRecoveryPending || helperState === "error" || runtimeErrorMessage !== ""
   readonly property bool popupExpanded: popupLayoutMode === "expanded"
   readonly property bool shouldAnimateUi: !reducedMotionMode
+  readonly property bool transpositionActive: transpositionSemitones !== 0
   readonly property bool standardGuitarPresetSelected: selectedPresetId === "guitar.standard"
+  readonly property int minimumDisplayedReferenceMidiNumber: minimumDisplayedReferenceMidiNumberForTransposition(transpositionSemitones)
+  readonly property int maximumDisplayedReferenceMidiNumber: maximumDisplayedReferenceMidiNumberForTransposition(transpositionSemitones)
   readonly property int selectedReferencePitchClassIndex: ((selectedReferenceMidiNumber % 12) + 12) % 12
   readonly property int selectedReferenceOctave: Math.floor(selectedReferenceMidiNumber / 12) - 1
   readonly property var selectedPreset: presetById(selectedPresetId)
-  readonly property var selectedPresetNotes: selectedPreset ? selectedPreset.notes : []
+  readonly property var selectedPresetBaseNotes: selectedPreset ? selectedPreset.notes : []
+  readonly property var selectedPresetNotes: transposeNoteTextList(selectedPresetBaseNotes, transpositionSemitones)
   readonly property string selectedPresetLabel: selectedPreset ? (selectedPreset.groupLabel + " | " + selectedPreset.label) : "Guitar | Standard"
+  readonly property bool currentQuickSwitchFavorite: indexOfQuickSwitchScene(favoriteQuickSwitches, currentQuickSwitchScene()) >= 0
+  readonly property var visibleRecentQuickSwitches: recentQuickSwitchesForDisplay()
+  readonly property bool hasQuickSwitches: favoriteQuickSwitches.length > 0 || visibleRecentQuickSwitches.length > 0
+  readonly property string transpositionLabelText: formatTranspositionLabel(transpositionSemitones)
   readonly property string selectedReferenceCommandNoteLabel: formatMidiNote(selectedReferenceMidiNumber, "sharps")
   readonly property string selectedReferenceNoteLabel: formatMidiNote(selectedReferenceMidiNumber, noteSpelling)
   readonly property int selectedReferenceIntervalPresetIndex: indexOfReferenceIntervalPreset(selectedReferenceIntervalSemitones)
@@ -224,7 +245,7 @@ BarWidget {
     return "LISTENING"
   }
   readonly property string quickTuneHeadingText: standardGuitarPresetSelected ? "Standard guitar" : "Quick tune"
-  readonly property string keyboardShortcutSummary: "Keys: 1-6 notes | Left/Right note | Alt+Up/Down octave | Shift+Left/Right BPM | D mode | [/] shape | M metro | Shift+M tap | Ctrl+M meter | Alt+M subdiv | P play/stop | X stop | T power | R restart | Esc close"
+  readonly property string keyboardShortcutSummary: "Keys: 1-6 notes | Ctrl+1-6 favorites | F favorite | Left/Right note | Alt+Up/Down octave | Shift+Left/Right BPM | D mode | [/] shape | M metro | Shift+M tap | Ctrl+M meter | Alt+M subdiv | P play/stop | X stop | T power | R restart | Esc close"
   readonly property bool opened: popupLoader.item ? popupLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: popupLoader.item ? popupLoader.item.popoutSwitchClosing === true : false
   readonly property string helperScriptPath: localPath("scripts/run-helper.sh")
@@ -233,6 +254,8 @@ BarWidget {
     helperScriptPath,
     "--reference-a-hz",
     formatReferenceAForHelper(referenceAHz),
+    "--transposition-semitones",
+    String(normalizeTranspositionSemitones(transpositionSemitones)),
   ]
   readonly property string readoutTitleText: {
     if (helperRecoveryPending) return "..."
@@ -273,13 +296,15 @@ BarWidget {
       return activeTonePlaybackTypeText + ": " + activeToneSceneLabel
         + (activeToneVoiceSummaryText !== "" ? (" | Voices: " + activeToneVoiceSummaryText) : "")
         + (metronomeActive ? (" | Metronome: " + metronomeSummaryText) : "")
+        + (transpositionActive ? (" | Transposition: " + transpositionLabelText) : "")
         + " | Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
     if (pitchActive)
       return "Detected pitch is matched against the nearest equal-tempered note at A4 = " + formatReferenceA(referenceAHz) + "."
+        + (transpositionActive ? (" | Transposition: " + transpositionLabelText) : "")
         + (metronomeActive ? (" | Metronome: " + metronomeSummaryText) : "")
     if (metronomeActive)
-      return "Metronome: " + metronomeSummaryText + " | Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
-    return "Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
+      return "Metronome: " + metronomeSummaryText + (transpositionActive ? (" | Transposition: " + transpositionLabelText) : "") + " | Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
+    return "Preset: " + selectedPresetLabel + (transpositionActive ? (" | Transposition: " + transpositionLabelText) : "") + " | A4 = " + formatReferenceA(referenceAHz)
   }
   readonly property string buttonText: {
     if (helperRecoveryPending) return "..."
@@ -308,13 +333,14 @@ BarWidget {
     if (metronomeActive) lines.push("metronome: " + metronomeSummaryText)
     lines.push("preset: " + selectedPresetLabel)
     lines.push("A4: " + formatReferenceA(referenceAHz))
+    lines.push("transposition: " + transpositionLabelText)
     lines.push("spelling: " + noteSpelling)
     if (helperRecoveryPending) lines.push("recovery: attempt " + helperRecoveryAttempt + " of " + helperRecoveryMaxAttempts)
     if (helperError !== "") lines.push("helper error: " + helperError)
     if (runtimeErrorMessage !== "") lines.push("runtime error: " + runtimeErrorMessage)
     if (lastStderrLine !== "") lines.push("stderr: " + lastStderrLine)
     if (!helperProc.running && lastExitCode !== 0) lines.push("last exit code: " + lastExitCode)
-    lines.push("keys: 1-6 quick notes | left/right note | alt+up/down octave | shift+left/right bpm | d mode | [/] shape | m metro | shift+m tap | ctrl+m meter | alt+m subdiv | p play/stop | x stop | t power | r restart | esc close")
+    lines.push("keys: 1-6 quick notes | ctrl+1-6 favorites | f favorite | left/right note | alt+up/down octave | shift+left/right bpm | d mode | [/] shape | m metro | shift+m tap | ctrl+m meter | alt+m subdiv | p play/stop | x stop | t power | r restart | esc close")
 
     lines.push("left click: open tuner")
     lines.push("right click: turn tuner on or off")
@@ -383,6 +409,80 @@ BarWidget {
     var numeric = finiteNumber(value, 440.0)
     numeric = Math.round(numeric * 10) / 10
     return Math.max(minimumReferenceAHz, Math.min(maximumReferenceAHz, numeric))
+  }
+
+  function normalizeTranspositionSemitones(value) {
+    return Math.max(minimumTranspositionSemitones, Math.min(maximumTranspositionSemitones, Math.round(finiteNumber(value, 0))))
+  }
+
+  function minimumDisplayedReferenceMidiNumberForTransposition(value) {
+    var transposition = normalizeTranspositionSemitones(value)
+    return Math.max(minimumReferenceMidiNumber, minimumReferenceMidiNumber + transposition)
+  }
+
+  function maximumDisplayedReferenceMidiNumberForTransposition(value) {
+    var transposition = normalizeTranspositionSemitones(value)
+    return Math.min(maximumReferenceMidiNumber, maximumReferenceMidiNumber + transposition)
+  }
+
+  function normalizeDisplayedReferenceMidiNumberForTransposition(midiNumber, transposition) {
+    var numeric = Math.round(finiteNumber(midiNumber, 69))
+    var minimumMidiNumber = minimumDisplayedReferenceMidiNumberForTransposition(transposition)
+    var maximumMidiNumber = maximumDisplayedReferenceMidiNumberForTransposition(transposition)
+    return Math.max(minimumMidiNumber, Math.min(maximumMidiNumber, numeric))
+  }
+
+  function shiftedMidiNumber(midiNumber, semitoneOffset) {
+    return Math.round(finiteNumber(midiNumber, 69)) + Math.round(finiteNumber(semitoneOffset, 0))
+  }
+
+  function transposeNoteText(noteText, semitoneOffset) {
+    var midiNumber = parseNoteMidiNumber(noteText)
+    if (midiNumber === null) return ""
+
+    var shifted = shiftedMidiNumber(midiNumber, semitoneOffset)
+    if (shifted < minimumReferenceMidiNumber || shifted > maximumReferenceMidiNumber) return ""
+    return formatMidiNote(shifted, "sharps")
+  }
+
+  function transposeNoteTextList(noteTexts, semitoneOffset) {
+    var list = Array.isArray(noteTexts) ? noteTexts : []
+    var transposed = []
+
+    for (var index = 0; index < list.length; index++) {
+      var noteText = transposeNoteText(list[index], semitoneOffset)
+      if (noteText === "") continue
+      transposed.push(noteText)
+    }
+
+    return transposed
+  }
+
+  function transpositionPresetBySemitones(value) {
+    var target = normalizeTranspositionSemitones(value)
+
+    for (var index = 0; index < transpositionPresets.length; index++) {
+      var preset = transpositionPresets[index]
+      if (Math.round(finiteNumber(preset.semitones, 0)) === target) return preset
+    }
+
+    return null
+  }
+
+  function formatSignedSemitoneOffset(value) {
+    var numeric = normalizeTranspositionSemitones(value)
+    return (numeric > 0 ? "+" : "") + numeric + " st"
+  }
+
+  function formatTranspositionLabel(value) {
+    var numeric = normalizeTranspositionSemitones(value)
+    if (numeric === 0) return "Concert"
+
+    var preset = transpositionPresetBySemitones(numeric)
+    if (preset && String(preset.label || "") !== "")
+      return String(preset.label || "") + " (" + formatSignedSemitoneOffset(numeric) + ")"
+
+    return formatSignedSemitoneOffset(numeric)
   }
 
   function normalizeMetronomeBpm(value) {
@@ -703,25 +803,455 @@ BarWidget {
     }
   }
 
+  function isQuickSwitchSceneCandidate(value) {
+    return value && typeof value === "object"
+      && ("presetId" in value
+        || "referenceNote" in value
+        || "transpositionSemitones" in value
+        || "playbackMode" in value
+        || "intervalSemitones" in value
+        || "chordId" in value
+        || "metronomeBpm" in value
+        || "metronomeBeatsPerBar" in value
+        || "metronomeBeatUnit" in value
+        || "metronomeSubdivision" in value)
+  }
+
+  function normalizeQuickSwitchScene(value) {
+    if (!isQuickSwitchSceneCandidate(value)) return null
+
+    var transposition = normalizeTranspositionSemitones(value.transpositionSemitones)
+    var referenceMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(
+      parseNoteMidiNumber(value.referenceNote) === null ? 69 : parseNoteMidiNumber(value.referenceNote),
+      transposition
+    )
+    var metronomeMeter = metronomeMeterPresetByValues(value.metronomeBeatsPerBar, value.metronomeBeatUnit)
+
+    return {
+      presetId: presetById(value.presetId).id,
+      referenceNote: formatMidiNote(referenceMidiNumber, "sharps"),
+      transpositionSemitones: transposition,
+      playbackMode: normalizeReferencePlaybackMode(value.playbackMode),
+      intervalSemitones: normalizeSelectedReferenceIntervalSemitones(value.intervalSemitones),
+      chordId: normalizeSelectedReferenceChordId(value.chordId),
+      metronomeBpm: normalizeMetronomeBpm(value.metronomeBpm),
+      metronomeBeatsPerBar: metronomeMeter.beatsPerBar,
+      metronomeBeatUnit: metronomeMeter.beatUnit,
+      metronomeSubdivision: normalizeMetronomeSubdivision(value.metronomeSubdivision),
+    }
+  }
+
+  function currentQuickSwitchScene() {
+    return normalizeQuickSwitchScene({
+      presetId: selectedPresetId,
+      referenceNote: selectedReferenceCommandNoteLabel,
+      transpositionSemitones: transpositionSemitones,
+      playbackMode: referencePlaybackMode,
+      intervalSemitones: selectedReferenceIntervalSemitones,
+      chordId: selectedReferenceChordId,
+      metronomeBpm: metronomeBpm,
+      metronomeBeatsPerBar: metronomeBeatsPerBar,
+      metronomeBeatUnit: metronomeBeatUnit,
+      metronomeSubdivision: metronomeSubdivision,
+    })
+  }
+
+  function quickSwitchSceneFingerprint(scene) {
+    var normalized = normalizeQuickSwitchScene(scene)
+    if (!normalized) return ""
+
+    return [
+      normalized.presetId,
+      normalized.referenceNote,
+      normalized.transpositionSemitones,
+      normalized.playbackMode,
+      normalized.intervalSemitones,
+      normalized.chordId,
+      normalized.metronomeBpm,
+      normalized.metronomeBeatsPerBar,
+      normalized.metronomeBeatUnit,
+      normalized.metronomeSubdivision,
+    ].join("|")
+  }
+
+  function quickSwitchReferenceStateFingerprint(scene) {
+    var normalized = normalizeQuickSwitchScene(scene)
+    if (!normalized) return ""
+
+    var referenceMidiNumber = parseNoteMidiNumber(normalized.referenceNote)
+    if (referenceMidiNumber === null) return ""
+
+    return String(shiftedMidiNumber(referenceMidiNumber, -normalized.transpositionSemitones))
+      + "|" + normalized.playbackMode + "|" + quickSwitchSceneIntervals(normalized).join(",")
+  }
+
+  function sameQuickSwitchScene(left, right) {
+    var leftFingerprint = quickSwitchSceneFingerprint(left)
+    return leftFingerprint !== "" && leftFingerprint === quickSwitchSceneFingerprint(right)
+  }
+
+  function filteredQuickSwitchSceneList(existingScenes, excludedScene, limit) {
+    var max = Math.max(0, Math.round(finiteNumber(limit, 0)))
+    if (max === 0) return []
+
+    var targetFingerprint = quickSwitchSceneFingerprint(excludedScene)
+    var list = Array.isArray(existingScenes) ? existingScenes : []
+    var filtered = []
+
+    for (var index = 0; index < list.length; index++) {
+      var scene = normalizeQuickSwitchScene(list[index])
+      if (!scene) continue
+      if (targetFingerprint !== "" && quickSwitchSceneFingerprint(scene) === targetFingerprint) continue
+      filtered.push(scene)
+    }
+
+    var normalized = []
+    var seen = {}
+
+    for (var sceneIndex = 0; sceneIndex < filtered.length; sceneIndex++) {
+      var candidate = filtered[sceneIndex]
+      var candidateFingerprint = quickSwitchSceneFingerprint(candidate)
+      if (candidateFingerprint === "" || seen[candidateFingerprint]) continue
+
+      normalized.push(candidate)
+      seen[candidateFingerprint] = true
+      if (normalized.length >= max) break
+    }
+
+    return normalized
+  }
+
+  function prependedQuickSwitchSceneList(existingScenes, scene, limit) {
+    var normalizedScene = normalizeQuickSwitchScene(scene)
+    var max = Math.max(0, Math.round(finiteNumber(limit, 0)))
+    if (max === 0) return []
+
+    var list = normalizedScene ? [normalizedScene] : []
+    var existing = Array.isArray(existingScenes) ? existingScenes : []
+
+    for (var index = 0; index < existing.length; index++)
+      list.push(existing[index])
+
+    return filteredQuickSwitchSceneList(list, null, max)
+  }
+
+  function indexOfQuickSwitchScene(scenes, scene) {
+    var targetFingerprint = quickSwitchSceneFingerprint(scene)
+    if (targetFingerprint === "") return -1
+
+    var list = Array.isArray(scenes) ? scenes : []
+    for (var index = 0; index < list.length; index++)
+      if (quickSwitchSceneFingerprint(list[index]) === targetFingerprint) return index
+
+    return -1
+  }
+
+  function recentQuickSwitchesForDisplay() {
+    var normalizedRecents = filteredQuickSwitchSceneList(recentQuickSwitches, null, maximumRecentQuickSwitches)
+    var visible = []
+
+    for (var index = 0; index < normalizedRecents.length; index++) {
+      var scene = normalizedRecents[index]
+      if (indexOfQuickSwitchScene(favoriteQuickSwitches, scene) >= 0) continue
+      visible.push(scene)
+    }
+
+    return visible
+  }
+
+  function quickSwitchSceneIntervals(scene) {
+    var normalized = normalizeQuickSwitchScene(scene)
+    if (!normalized) return []
+
+    if (normalized.playbackMode === "drone") return [normalized.intervalSemitones]
+
+    if (normalized.playbackMode === "chord") {
+      var chordPreset = chordPresetById(normalized.chordId)
+      return chordPreset ? chordPreset.intervalsSemitones.slice(0) : []
+    }
+
+    return []
+  }
+
+  function quickSwitchPresetSummary(scene) {
+    var normalized = normalizeQuickSwitchScene(scene)
+    if (!normalized) return ""
+
+    var preset = presetById(normalized.presetId)
+    var groupLabel = String(preset.groupLabel || "")
+    var label = String(preset.label || "")
+    if (groupLabel === "") return label
+    if (label === "") return groupLabel
+    return groupLabel + " " + label
+  }
+
+  function quickSwitchSceneLabel(scene) {
+    var normalized = normalizeQuickSwitchScene(scene)
+    if (!normalized) return ""
+
+    return formatReferenceSceneLabel(displayNoteLabel(normalized.referenceNote), quickSwitchSceneIntervals(normalized))
+  }
+
+  function quickSwitchButtonText(scene) {
+    var normalized = normalizeQuickSwitchScene(scene)
+    if (!normalized) return ""
+
+    var defaultMeterLabel = metronomeMeterPresetByValues(defaultMetronomeBeatsPerBar, defaultMetronomeBeatUnit).label
+    var meterLabel = metronomeMeterPresetByValues(normalized.metronomeBeatsPerBar, normalized.metronomeBeatUnit).label
+    var subdivisionLabel = metronomeSubdivisionPresets[indexOfMetronomeSubdivisionPreset(normalized.metronomeSubdivision)].label
+    var parts = []
+    var presetText = quickSwitchPresetSummary(normalized)
+    var referenceText = quickSwitchSceneLabel(normalized)
+
+    if (presetText !== "") parts.push(presetText)
+    if (referenceText !== "") parts.push(referenceText)
+    if (normalized.transpositionSemitones !== 0) parts.push(formatTranspositionLabel(normalized.transpositionSemitones))
+    parts.push(normalized.metronomeBpm + " BPM")
+    if (meterLabel !== defaultMeterLabel || normalized.metronomeSubdivision !== defaultMetronomeSubdivision)
+      parts.push(meterLabel)
+    if (normalized.metronomeSubdivision !== defaultMetronomeSubdivision)
+      parts.push(subdivisionLabel)
+
+    return parts.join(" | ")
+  }
+
+  function rememberCurrentQuickSwitch() {
+    recentQuickSwitches = prependedQuickSwitchSceneList(recentQuickSwitches, currentQuickSwitchScene(), maximumRecentQuickSwitches)
+  }
+
+  function toggleCurrentQuickSwitchFavorite() {
+    var scene = currentQuickSwitchScene()
+    if (!scene) return
+
+    if (indexOfQuickSwitchScene(favoriteQuickSwitches, scene) >= 0)
+      favoriteQuickSwitches = filteredQuickSwitchSceneList(favoriteQuickSwitches, scene, maximumFavoriteQuickSwitches)
+    else {
+      favoriteQuickSwitches = prependedQuickSwitchSceneList(favoriteQuickSwitches, scene, maximumFavoriteQuickSwitches)
+      recentQuickSwitches = filteredQuickSwitchSceneList(recentQuickSwitches, scene, maximumRecentQuickSwitches)
+    }
+
+    persistWidgetSettings()
+  }
+
+  function applyQuickSwitchScene(scene) {
+    var normalized = normalizeQuickSwitchScene(scene)
+    if (!normalized) return false
+
+    var currentReferenceState = quickSwitchReferenceStateFingerprint(currentQuickSwitchScene())
+    var nextReferenceState = quickSwitchReferenceStateFingerprint(normalized)
+    var metronomeChanged = metronomeBpm !== normalized.metronomeBpm
+      || metronomeBeatsPerBar !== normalized.metronomeBeatsPerBar
+      || metronomeBeatUnit !== normalized.metronomeBeatUnit
+      || metronomeSubdivision !== normalized.metronomeSubdivision
+    var transpositionChanged = transpositionSemitones !== normalized.transpositionSemitones
+    var referenceMidiNumber = parseNoteMidiNumber(normalized.referenceNote)
+
+    settingsHydrating = true
+    selectedPresetId = normalized.presetId
+    transpositionSemitones = normalized.transpositionSemitones
+    selectedReferenceMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(referenceMidiNumber === null ? 69 : referenceMidiNumber, normalized.transpositionSemitones)
+    referencePlaybackMode = normalized.playbackMode
+    selectedReferenceIntervalSemitones = normalized.intervalSemitones
+    selectedReferenceChordId = normalized.chordId
+    metronomeBpm = normalized.metronomeBpm
+    metronomeBeatsPerBar = normalized.metronomeBeatsPerBar
+    metronomeBeatUnit = normalized.metronomeBeatUnit
+    metronomeSubdivision = normalized.metronomeSubdivision
+    recentQuickSwitches = prependedQuickSwitchSceneList(recentQuickSwitches, normalized, maximumRecentQuickSwitches)
+    settingsHydrating = false
+    persistWidgetSettings()
+
+    if (transpositionChanged && (helperWanted || helperProcessStarted || helperProc.running))
+      queueHelperCommand({ type: "set_transposition", semitones: transpositionSemitones })
+    if (currentReferenceState !== nextReferenceState && toneActive) playSelectedTone()
+    if (metronomeChanged && metronomeActive && (helperWanted || helperProcessStarted || helperProc.running))
+      queueHelperCommand(metronomeStartCommand())
+
+    return true
+  }
+
+  function applyFavoriteQuickSwitchAt(index) {
+    var numeric = Math.round(finiteNumber(index, -1))
+    if (numeric < 0 || numeric >= favoriteQuickSwitches.length) return false
+    return applyQuickSwitchScene(favoriteQuickSwitches[numeric])
+  }
+
+  function normalizedSettingsObject(value) {
+    var source = value && typeof value === "object" ? value : ({})
+    var transposition = normalizeTranspositionSemitones(source.transpositionSemitones)
+    var selectedMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(
+      parseNoteMidiNumber(source.selectedReferenceNote) === null ? 69 : parseNoteMidiNumber(source.selectedReferenceNote),
+      transposition
+    )
+    var metronomePreset = metronomeMeterPresetByValues(
+      source.metronomeBeatsPerBar,
+      source.metronomeBeatUnit
+    )
+
+    return {
+      configVersion: settingsConfigVersion,
+      referenceAHz: normalizeReferenceAHz(source.referenceAHz),
+      transpositionSemitones: transposition,
+      noteSpelling: normalizeNoteSpelling(source.noteSpelling),
+      selectedPresetId: presetById(source.selectedPresetId).id,
+      selectedReferenceNote: formatMidiNote(selectedMidiNumber, "sharps"),
+      metronomeBpm: normalizeMetronomeBpm(source.metronomeBpm),
+      metronomeBeatsPerBar: metronomePreset.beatsPerBar,
+      metronomeBeatUnit: metronomePreset.beatUnit,
+      metronomeSubdivision: normalizeMetronomeSubdivision(source.metronomeSubdivision),
+      popupLayoutMode: normalizePopupLayoutMode(source.popupLayoutMode),
+      highContrastMode: normalizeBooleanSetting(source.highContrastMode, false),
+      reducedMotionMode: normalizeBooleanSetting(source.reducedMotionMode, false),
+      favoriteQuickSwitches: filteredQuickSwitchSceneList(source.favoriteQuickSwitches, null, maximumFavoriteQuickSwitches),
+      recentQuickSwitches: filteredQuickSwitchSceneList(source.recentQuickSwitches, null, maximumRecentQuickSwitches),
+    }
+  }
+
+  function currentNormalizedSettingsObject() {
+    return normalizedSettingsObject({
+      referenceAHz: referenceAHz,
+      transpositionSemitones: transpositionSemitones,
+      noteSpelling: noteSpelling,
+      selectedPresetId: selectedPresetId,
+      selectedReferenceNote: selectedReferenceCommandNoteLabel,
+      metronomeBpm: metronomeBpm,
+      metronomeBeatsPerBar: metronomeBeatsPerBar,
+      metronomeBeatUnit: metronomeBeatUnit,
+      metronomeSubdivision: metronomeSubdivision,
+      popupLayoutMode: popupLayoutMode,
+      highContrastMode: highContrastMode,
+      reducedMotionMode: reducedMotionMode,
+      favoriteQuickSwitches: favoriteQuickSwitches,
+      recentQuickSwitches: recentQuickSwitches,
+    })
+  }
+
+  function exportedConfigurationJson() {
+    return JSON.stringify(currentNormalizedSettingsObject(), null, 2)
+  }
+
+  function importedSettingsConfigVersion(settingsObject) {
+    if (!settingsObject || typeof settingsObject !== "object" || Array.isArray(settingsObject)) return null
+    if (!("configVersion" in settingsObject)) return null
+
+    var numeric = Number(settingsObject.configVersion)
+    if (!isFinite(numeric) || Math.round(numeric) !== numeric) return null
+    return numeric
+  }
+
+  function applyNormalizedSettings(settingsObject, persistChanges) {
+    var settings = settingsObject && typeof settingsObject === "object"
+      ? settingsObject
+      : currentNormalizedSettingsObject()
+    var shouldPersist = persistChanges !== false
+    var previousReferenceAHz = referenceAHz
+    var previousTranspositionSemitones = transpositionSemitones
+    var previousMetronomeBpm = metronomeBpm
+    var previousMetronomeBeatsPerBar = metronomeBeatsPerBar
+    var previousMetronomeBeatUnit = metronomeBeatUnit
+    var previousMetronomeSubdivision = metronomeSubdivision
+    var previousReferenceState = quickSwitchReferenceStateFingerprint(currentQuickSwitchScene())
+    var selectedMidiNumber = parseNoteMidiNumber(settings.selectedReferenceNote)
+
+    settingsHydrating = true
+    referenceAHz = settings.referenceAHz
+    transpositionSemitones = settings.transpositionSemitones
+    noteSpelling = settings.noteSpelling
+    selectedPresetId = settings.selectedPresetId
+    metronomeBpm = settings.metronomeBpm
+    metronomeBeatsPerBar = settings.metronomeBeatsPerBar
+    metronomeBeatUnit = settings.metronomeBeatUnit
+    metronomeSubdivision = settings.metronomeSubdivision
+    popupLayoutMode = settings.popupLayoutMode
+    highContrastMode = settings.highContrastMode
+    reducedMotionMode = settings.reducedMotionMode
+    favoriteQuickSwitches = settings.favoriteQuickSwitches
+    recentQuickSwitches = settings.recentQuickSwitches
+    selectedReferenceMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(selectedMidiNumber === null ? 69 : selectedMidiNumber, transpositionSemitones)
+    settingsHydrating = false
+
+    if (shouldPersist) persistWidgetSettings()
+
+    if (Math.abs(referenceAHz - previousReferenceAHz) >= 0.0001
+        && (helperWanted || helperProcessStarted || helperProc.running)) {
+      queueHelperCommand({ type: "set_reference_a", frequency_hz: referenceAHz })
+    }
+    if (transpositionSemitones !== previousTranspositionSemitones
+        && (helperWanted || helperProcessStarted || helperProc.running)) {
+      queueHelperCommand({ type: "set_transposition", semitones: transpositionSemitones })
+    }
+
+    var currentReferenceState = quickSwitchReferenceStateFingerprint(currentQuickSwitchScene())
+    if (previousReferenceState !== currentReferenceState
+        && toneActive
+        && (helperWanted || helperProcessStarted || helperProc.running)) {
+      playSelectedTone()
+    }
+
+    if ((metronomeBpm !== previousMetronomeBpm
+        || metronomeBeatsPerBar !== previousMetronomeBeatsPerBar
+        || metronomeBeatUnit !== previousMetronomeBeatUnit
+        || metronomeSubdivision !== previousMetronomeSubdivision)
+        && metronomeActive
+        && (helperWanted || helperProcessStarted || helperProc.running)) {
+      queueHelperCommand(metronomeStartCommand())
+    }
+  }
+
+  function importConfigurationJson(text) {
+    var trimmed = String(text || "").trim()
+    if (trimmed === "") {
+      return {
+        ok: false,
+        message: "Import failed: paste a JSON object with Omatune settings.",
+      }
+    }
+
+    var importedSettings
+    try {
+      importedSettings = JSON.parse(trimmed)
+    } catch (error) {
+      return {
+        ok: false,
+        message: "Import failed: invalid JSON. " + String(error),
+      }
+    }
+
+    if (!importedSettings || typeof importedSettings !== "object" || Array.isArray(importedSettings)) {
+      return {
+        ok: false,
+        message: "Import failed: configuration must be a JSON object.",
+      }
+    }
+
+    // Reject future schema versions so older builds do not silently misread newer exports.
+    var importedConfigVersion = importedSettingsConfigVersion(importedSettings)
+    if (importedConfigVersion !== null && importedConfigVersion > settingsConfigVersion) {
+      return {
+        ok: false,
+        message: "Import failed: configVersion " + importedConfigVersion + " is newer than this build supports.",
+      }
+    }
+
+    applyNormalizedSettings(normalizedSettingsObject(importedSettings), true)
+    return {
+      ok: true,
+      message: "Imported configuration.",
+      text: exportedConfigurationJson(),
+    }
+  }
+
   function persistedSettingsEntry() {
     var entry = { id: root.moduleName }
     var existingSettings = root.settings || ({})
+    var settings = currentNormalizedSettingsObject()
 
     for (var key in existingSettings)
       if (key !== "id") entry[key] = existingSettings[key]
 
-    entry.configVersion = settingsConfigVersion
-    entry.referenceAHz = normalizeReferenceAHz(referenceAHz)
-    entry.noteSpelling = normalizeNoteSpelling(noteSpelling)
-    entry.selectedPresetId = selectedPresetId
-    entry.selectedReferenceNote = selectedReferenceCommandNoteLabel
-    entry.metronomeBpm = normalizeMetronomeBpm(metronomeBpm)
-    entry.metronomeBeatsPerBar = normalizeMetronomeBeatsPerBar(metronomeBeatsPerBar, metronomeBeatUnit)
-    entry.metronomeBeatUnit = normalizeMetronomeBeatUnit(metronomeBeatsPerBar, metronomeBeatUnit)
-    entry.metronomeSubdivision = normalizeMetronomeSubdivision(metronomeSubdivision)
-    entry.popupLayoutMode = normalizePopupLayoutMode(popupLayoutMode)
-    entry.highContrastMode = !!highContrastMode
-    entry.reducedMotionMode = !!reducedMotionMode
+    for (var settingsKey in settings)
+      entry[settingsKey] = settings[settingsKey]
+
     return entry
   }
 
@@ -736,45 +1266,7 @@ BarWidget {
   }
 
   function loadPersistedSettings() {
-    var previousReferenceAHz = referenceAHz
-    var previousMetronomeBpm = metronomeBpm
-    var previousMetronomeBeatsPerBar = metronomeBeatsPerBar
-    var previousMetronomeBeatUnit = metronomeBeatUnit
-    var previousMetronomeSubdivision = metronomeSubdivision
-    settingsHydrating = true
-    referenceAHz = normalizeReferenceAHz(root.setting("referenceAHz", 440.0))
-    noteSpelling = normalizeNoteSpelling(root.setting("noteSpelling", "sharps"))
-    selectedPresetId = presetById(root.setting("selectedPresetId", "guitar.standard")).id
-    metronomeBpm = normalizeMetronomeBpm(root.setting("metronomeBpm", defaultMetronomeBpm))
-    var persistedMetronomePreset = metronomeMeterPresetByValues(
-      root.setting("metronomeBeatsPerBar", defaultMetronomeBeatsPerBar),
-      root.setting("metronomeBeatUnit", defaultMetronomeBeatUnit)
-    )
-    metronomeBeatsPerBar = persistedMetronomePreset.beatsPerBar
-    metronomeBeatUnit = persistedMetronomePreset.beatUnit
-    metronomeSubdivision = normalizeMetronomeSubdivision(root.setting("metronomeSubdivision", defaultMetronomeSubdivision))
-    popupLayoutMode = normalizePopupLayoutMode(root.setting("popupLayoutMode", "compact"))
-    highContrastMode = normalizeBooleanSetting(root.setting("highContrastMode", false), false)
-    reducedMotionMode = normalizeBooleanSetting(root.setting("reducedMotionMode", false), false)
-
-    var persistedReferenceNote = String(root.setting("selectedReferenceNote", "A4") || "A4")
-    var selectedMidiNumber = parseNoteMidiNumber(persistedReferenceNote)
-    selectedReferenceMidiNumber = selectedMidiNumber === null ? 69 : selectedMidiNumber
-    settingsHydrating = false
-
-    if (Math.abs(referenceAHz - previousReferenceAHz) >= 0.0001
-        && (helperWanted || helperProcessStarted || helperProc.running)) {
-      queueHelperCommand({ type: "set_reference_a", frequency_hz: referenceAHz })
-    }
-
-    if ((metronomeBpm !== previousMetronomeBpm
-        || metronomeBeatsPerBar !== previousMetronomeBeatsPerBar
-        || metronomeBeatUnit !== previousMetronomeBeatUnit
-        || metronomeSubdivision !== previousMetronomeSubdivision)
-        && metronomeActive
-        && (helperWanted || helperProcessStarted || helperProc.running)) {
-      queueHelperCommand(metronomeStartCommand())
-    }
+    applyNormalizedSettings(normalizedSettingsObject(root.settings || ({})), false)
   }
 
   function setReferenceA(value) {
@@ -794,6 +1286,28 @@ BarWidget {
 
   function resetReferenceA() {
     setReferenceA(440.0)
+  }
+
+  function setTranspositionSemitones(value) {
+    var previous = transpositionSemitones
+    var next = normalizeTranspositionSemitones(value)
+    if (next === previous) return
+
+    var soundingMidiNumber = shiftedMidiNumber(selectedReferenceMidiNumber, -previous)
+    transpositionSemitones = next
+    selectedReferenceMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(soundingMidiNumber + next, next)
+    persistWidgetSettings()
+
+    if (helperWanted || helperProcessStarted || helperProc.running)
+      queueHelperCommand({ type: "set_transposition", semitones: transpositionSemitones })
+  }
+
+  function changeTranspositionSemitones(delta) {
+    setTranspositionSemitones(transpositionSemitones + Math.round(finiteNumber(delta, 0)))
+  }
+
+  function resetTranspositionSemitones() {
+    setTranspositionSemitones(0)
   }
 
   function metronomeStartCommand() {
@@ -996,7 +1510,7 @@ BarWidget {
   }
 
   function setSelectedReferenceMidiNumber(midiNumber) {
-    var next = Math.max(minimumReferenceMidiNumber, Math.min(maximumReferenceMidiNumber, Math.round(finiteNumber(midiNumber, 69))))
+    var next = normalizeDisplayedReferenceMidiNumberForTransposition(midiNumber, transpositionSemitones)
     if (next === selectedReferenceMidiNumber) return false
 
     selectedReferenceMidiNumber = next
@@ -1017,6 +1531,7 @@ BarWidget {
     if (preset.id === selectedPresetId) return
 
     selectedPresetId = preset.id
+    rememberCurrentQuickSwitch()
     persistWidgetSettings()
   }
 
@@ -1297,6 +1812,8 @@ BarWidget {
   }
 
   function startMetronome() {
+    rememberCurrentQuickSwitch()
+    persistWidgetSettings()
     queueHelperCommand(metronomeStartCommand())
   }
 
@@ -1316,11 +1833,20 @@ BarWidget {
 
   function toggleSelectedReferenceTone() {
     if (selectedReferenceToneActive) stopTone()
-    else playSelectedTone()
+    else {
+      rememberCurrentQuickSwitch()
+      persistWidgetSettings()
+      playSelectedTone()
+    }
   }
 
   function playReferenceNoteString(noteText) {
-    if (!applySelectedReferenceFromNote(noteText)) return
+    var midiNumber = parseNoteMidiNumber(noteText)
+    if (midiNumber === null) return
+
+    selectedReferenceMidiNumber = midiNumber
+    rememberCurrentQuickSwitch()
+    persistWidgetSettings()
     playSelectedTone()
   }
 

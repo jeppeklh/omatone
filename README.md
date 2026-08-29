@@ -54,8 +54,14 @@ subdivisions, and a beat-one accent.
     indication
 -   Arbitrary note selection for reference tones
 -   Adjustable A4 reference frequency in the supported calibration range
+-   Optional semitone transposition across detected note labels and
+    reference-tone targeting
 -   Persisted reference note, metronome tempo/meter/subdivision, tuning
     preset, and sharp/flat spelling preference
+-   Persisted quick-switch favorites and recents for workflow snapshots
+    over the current preset, reference scene, and metronome setup
+-   Human-readable copy/paste import/export of the supported JSON
+    configuration schema
 -   Built-in guitar, bass, ukulele, and violin-family tuning presets
 -   Sensible behavior for silence, weak input, invalid pitch estimates,
     and audio errors
@@ -99,6 +105,8 @@ Supported flags:
 
 -   `--reference-a-hz <hz>`: startup A4 calibration within
     `400.0..=480.0` Hz
+-   `--transposition-semitones <n>`: startup note transposition within
+    `-12..=12` semitones
 -   `-h`, `--help`: print usage and exit without starting audio
 -   `-V`, `--version`: print the helper version and exit without starting
     audio

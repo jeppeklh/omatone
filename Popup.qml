@@ -10,6 +10,8 @@ FocusScope {
   property var hostWidget: null
   property bool opened: false
   property bool popoutSwitchClosing: false
+  property string configTransferStatusText: ""
+  property bool configTransferStatusError: false
 
   readonly property color foreground: root.bar ? root.bar.foreground : Color.foreground
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -49,6 +51,29 @@ FocusScope {
     Qt.callLater(function() { root.popoutSwitchClosing = false })
   }
 
+  function ensureConfigTransferTextLoaded() {
+    if (!hostWidget) return
+    if (String(configTransferEditor.text || "").trim() !== "") return
+    configTransferEditor.text = hostWidget.exportedConfigurationJson()
+  }
+
+  function loadCurrentConfigurationText() {
+    if (!hostWidget) return
+    configTransferEditor.text = hostWidget.exportedConfigurationJson()
+    configTransferStatusText = ""
+    configTransferStatusError = false
+  }
+
+  function applyImportedConfigurationText() {
+    if (!hostWidget) return
+
+    var result = hostWidget.importConfigurationJson(configTransferEditor.text)
+    configTransferStatusText = String(result.message || "")
+    configTransferStatusError = result.ok !== true
+    if (result.ok && "text" in result)
+      configTransferEditor.text = String(result.text || "")
+  }
+
   function focusInitialControl() {
     if (!opened) return
 
@@ -59,8 +84,13 @@ FocusScope {
   }
 
   onOpenedChanged: {
-    if (opened) Qt.callLater(root.focusInitialControl)
+    if (opened) {
+      Qt.callLater(root.focusInitialControl)
+      Qt.callLater(root.ensureConfigTransferTextLoaded)
+    }
   }
+
+  onHostWidgetChanged: Qt.callLater(root.ensureConfigTransferTextLoaded)
 
   Shortcut {
     sequence: "Escape"
@@ -171,6 +201,12 @@ FocusScope {
   }
 
   Shortcut {
+    sequence: "F"
+    enabled: root.opened && !!root.hostWidget
+    onActivated: root.hostWidget.toggleCurrentQuickSwitchFavorite()
+  }
+
+  Shortcut {
     sequence: "1"
     enabled: root.opened && !!root.hostWidget && root.hostWidget.selectedPresetNotes.length >= 1
     onActivated: root.hostWidget.playPresetNoteAt(0)
@@ -204,6 +240,42 @@ FocusScope {
     sequence: "6"
     enabled: root.opened && !!root.hostWidget && root.hostWidget.selectedPresetNotes.length >= 6
     onActivated: root.hostWidget.playPresetNoteAt(5)
+  }
+
+  Shortcut {
+    sequence: "Ctrl+1"
+    enabled: root.opened && !!root.hostWidget && root.hostWidget.favoriteQuickSwitches.length >= 1
+    onActivated: root.hostWidget.applyFavoriteQuickSwitchAt(0)
+  }
+
+  Shortcut {
+    sequence: "Ctrl+2"
+    enabled: root.opened && !!root.hostWidget && root.hostWidget.favoriteQuickSwitches.length >= 2
+    onActivated: root.hostWidget.applyFavoriteQuickSwitchAt(1)
+  }
+
+  Shortcut {
+    sequence: "Ctrl+3"
+    enabled: root.opened && !!root.hostWidget && root.hostWidget.favoriteQuickSwitches.length >= 3
+    onActivated: root.hostWidget.applyFavoriteQuickSwitchAt(2)
+  }
+
+  Shortcut {
+    sequence: "Ctrl+4"
+    enabled: root.opened && !!root.hostWidget && root.hostWidget.favoriteQuickSwitches.length >= 4
+    onActivated: root.hostWidget.applyFavoriteQuickSwitchAt(3)
+  }
+
+  Shortcut {
+    sequence: "Ctrl+5"
+    enabled: root.opened && !!root.hostWidget && root.hostWidget.favoriteQuickSwitches.length >= 5
+    onActivated: root.hostWidget.applyFavoriteQuickSwitchAt(4)
+  }
+
+  Shortcut {
+    sequence: "Ctrl+6"
+    enabled: root.opened && !!root.hostWidget && root.hostWidget.favoriteQuickSwitches.length >= 6
+    onActivated: root.hostWidget.applyFavoriteQuickSwitchAt(5)
   }
 
   PopupCard {
@@ -289,6 +361,17 @@ FocusScope {
               bordered: true
               focusable: true
               onClicked: if (root.hostWidget) root.hostWidget.togglePopupLayoutMode()
+            }
+
+            Button {
+              text: root.hostWidget && root.hostWidget.currentQuickSwitchFavorite ? "Unfavorite" : "Favorite"
+              selected: root.hostWidget ? root.hostWidget.currentQuickSwitchFavorite : false
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              bordered: true
+              focusable: true
+              onClicked: if (root.hostWidget) root.hostWidget.toggleCurrentQuickSwitchFavorite()
             }
           }
         }
@@ -491,6 +574,119 @@ FocusScope {
         }
 
         PanelSeparator {
+          foreground: root.foreground
+        }
+
+        Item {
+          visible: root.hostWidget ? (root.hostWidget.hasQuickSwitches || root.expandedLayout) : false
+          width: parent.width
+          height: visible ? quickSwitchColumn.implicitHeight : 0
+
+          Column {
+            id: quickSwitchColumn
+            width: parent.width
+            spacing: Style.space(8)
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Quick switch"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: root.hostWidget
+                ? "Favorites save the current preset, reference scene, and metronome setup. Recents update when you play a tone, start the metronome, or switch presets."
+                : ""
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.favoriteQuickSwitches.length > 0 : false
+              textFormat: Text.PlainText
+              text: "Favorites"
+              color: root.foreground
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Flow {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.favoriteQuickSwitches.length > 0 : false
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.favoriteQuickSwitches : []
+
+                Button {
+                  required property var modelData
+                  required property int index
+
+                  text: root.hostWidget ? ((index + 1) + "  " + root.hostWidget.quickSwitchButtonText(modelData)) : String(modelData)
+                  selected: root.hostWidget ? root.hostWidget.sameQuickSwitchScene(root.hostWidget.currentQuickSwitchScene(), modelData) : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(7)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.applyQuickSwitchScene(modelData)
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.visibleRecentQuickSwitches.length > 0 : false
+              textFormat: Text.PlainText
+              text: "Recents"
+              color: root.foreground
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Flow {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.visibleRecentQuickSwitches.length > 0 : false
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.visibleRecentQuickSwitches : []
+
+                Button {
+                  required property var modelData
+
+                  text: root.hostWidget ? root.hostWidget.quickSwitchButtonText(modelData) : String(modelData)
+                  selected: root.hostWidget ? root.hostWidget.sameQuickSwitchScene(root.hostWidget.currentQuickSwitchScene(), modelData) : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(7)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.applyQuickSwitchScene(modelData)
+                }
+              }
+            }
+          }
+        }
+
+        PanelSeparator {
+          visible: root.hostWidget ? (root.hostWidget.hasQuickSwitches || root.expandedLayout) : false
           foreground: root.foreground
         }
 
@@ -1249,6 +1445,180 @@ FocusScope {
               onChanged: function(value) {
                 if (root.hostWidget) root.hostWidget.setNoteSpellingPreference(value)
               }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Advanced tuning"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: root.hostWidget
+                ? "Transposition applies one helper-owned semitone offset across detected note names and reference tones. Changing it live keeps the same sounding pitch and relabels the note space around it."
+                : ""
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                text: "-1"
+                width: Style.space(64)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.changeTranspositionSemitones(-1)
+              }
+
+              Button {
+                text: root.hostWidget ? root.hostWidget.transpositionLabelText : "Concert"
+                width: Math.max(Style.space(120), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.resetTranspositionSemitones()
+              }
+
+              Button {
+                text: "+1"
+                width: Style.space(64)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.changeTranspositionSemitones(1)
+              }
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.transpositionPresets : []
+
+                Button {
+                  required property var modelData
+
+                  text: String(modelData.label || "")
+                  selected: root.hostWidget ? root.hostWidget.transpositionSemitones === Number(modelData.semitones) : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(7)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.setTranspositionSemitones(Number(modelData.semitones))
+                }
+              }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Config transfer"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Load current to export the supported JSON settings. Paste exported JSON here and apply it to import. The transfer format omits the widget id and unrelated host keys."
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                text: "Load current"
+                width: Math.max(Style.space(110), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: root.loadCurrentConfigurationText()
+              }
+
+              Button {
+                text: "Apply import"
+                width: Math.max(Style.space(110), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: root.applyImportedConfigurationText()
+              }
+            }
+
+            Rectangle {
+              width: parent.width
+              implicitHeight: Math.max(Style.space(170), configTransferEditor.contentHeight + Style.space(16))
+              radius: Style.cornerRadius
+              color: Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.05)
+              border.width: 1
+              border.color: Util.alpha(root.foreground, root.highContrast ? 0.48 : 0.22)
+
+              TextEdit {
+                id: configTransferEditor
+                anchors.fill: parent
+                anchors.margins: Style.space(8)
+                text: ""
+                color: root.foreground
+                font.family: "monospace"
+                font.pixelSize: Style.font.caption
+                wrapMode: TextEdit.WrapAnywhere
+                selectByMouse: true
+                selectByKeyboard: true
+                persistentSelection: true
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.configTransferStatusText !== ""
+              textFormat: Text.PlainText
+              text: root.configTransferStatusText
+              color: root.configTransferStatusError ? Color.urgent : Color.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
           }
         }

@@ -180,7 +180,7 @@ fn helper_cli_help_is_stable() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "Usage: omatune-helper [--reference-a-hz <hz>] [--help] [--version]\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>  Set startup calibration within 400.0..=480.0 Hz\n  -h, --help             Print this help text and exit\n  -V, --version          Print helper version and exit\n"
+        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--help] [--version]\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within 400.0..=480.0 Hz\n  --transposition-semitones <n>  Set startup transposition within -12..=12 semitones\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit\n"
     );
     assert_eq!(String::from_utf8(output.stderr).unwrap(), "");
 }
@@ -414,7 +414,7 @@ fn runtime_output_failure_is_reported_without_crashing_helper() {
 #[test]
 fn invalid_commands_do_not_crash_or_block_later_valid_commands() {
     let output = run_helper_with_input(
-        "[]\n{\"type\":1}\n{\"type\":\"play_tone\",\"note\":\"H2\"}\n{\"type\":\"set_reference_a\",\"frequency_hz\":399.0}\n{\"type\":\"start_metronome\",\"bpm\":301}\n{\"type\":\"start_metronome\",\"bpm\":120,\"beats_per_bar\":5,\"beat_unit\":4}\n{\"type\":\"start_metronome\",\"bpm\":120,\"subdivision\":5}\n{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"stop_tone\"}\n",
+        "[]\n{\"type\":1}\n{\"type\":\"play_tone\",\"note\":\"H2\"}\n{\"type\":\"set_reference_a\",\"frequency_hz\":399.0}\n{\"type\":\"set_transposition\",\"semitones\":13}\n{\"type\":\"start_metronome\",\"bpm\":301}\n{\"type\":\"start_metronome\",\"bpm\":120,\"beats_per_bar\":5,\"beat_unit\":4}\n{\"type\":\"start_metronome\",\"bpm\":120,\"subdivision\":5}\n{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"stop_tone\"}\n",
         Some("idle"),
         Some("ok"),
         &[],
@@ -430,6 +430,7 @@ fn invalid_commands_do_not_crash_or_block_later_valid_commands() {
             r#"{"type":"error","code":"invalid_command","message":"invalid command: missing string field 'type'"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_note","message":"invalid note: invalid note letter 'H'"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_reference_frequency","message":"invalid reference A frequency: reference A frequency must be within 400.0..=480.0 Hz"}"#.to_owned(),
+            r#"{"type":"error","code":"invalid_transposition","message":"invalid transposition: transposition must be within -12..=12 semitones"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_metronome_bpm","message":"invalid metronome BPM: metronome BPM must be within 20..=300"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_metronome_meter","message":"invalid metronome meter: supported metronome meters are 2/4, 3/4, 4/4, and 6/8"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_metronome_subdivision","message":"invalid metronome subdivision: metronome subdivision must be within 1..=4"}"#.to_owned(),
@@ -500,6 +501,28 @@ fn startup_reference_a_argument_calibrates_initial_pitch_and_tone() {
 }
 
 #[test]
+fn startup_transposition_argument_relabels_initial_pitch_and_tone() {
+    let output = run_helper_until_stdout_lines(
+        "{\"type\":\"play_tone\",\"note\":\"B4\"}\n",
+        3,
+        Some("pitch:A4"),
+        Some("ok"),
+        &["--transposition-semitones", "2"],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(lines[0], r#"{"type":"ready"}"#);
+    assert_eq!(lines.len(), 3);
+    assert!(lines[1..].contains(
+        &r#"{"type":"pitch","note":"B4","frequency_hz":440.0,"cents":0.0,"confidence":1.0}"#
+            .to_owned()
+    ));
+    assert!(lines[1..]
+        .contains(&r#"{"type":"tone_started","note":"B4","frequency_hz":440.0}"#.to_owned()));
+}
+
+#[test]
 fn runtime_reference_a_update_restarts_active_tone_with_calibrated_frequency() {
     let output = run_helper_with_input(
         "{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"set_reference_a\",\"frequency_hz\":442.0}\n",
@@ -516,6 +539,48 @@ fn runtime_reference_a_update_restarts_active_tone_with_calibrated_frequency() {
             r#"{"type":"ready"}"#.to_owned(),
             r#"{"type":"tone_started","note":"A4","frequency_hz":440.0}"#.to_owned(),
             r#"{"type":"tone_started","note":"A4","frequency_hz":442.0}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn runtime_transposition_update_relabels_active_tone_without_changing_frequency() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"set_transposition\",\"semitones\":2}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0}"#.to_owned(),
+            r#"{"type":"tone_started","note":"B4","frequency_hz":440.0}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn runtime_transposition_update_relabels_active_interval_scene_without_changing_frequencies() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"intervals_semitones\":[12]}\n{\"type\":\"set_transposition\",\"semitones\":2}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}"#.to_owned(),
+            r#"{"type":"tone_started","note":"B4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"B4","frequency_hz":440.0},{"note":"B5","frequency_hz":880.0}]}"#.to_owned(),
         ]
     );
 }
@@ -574,5 +639,22 @@ fn invalid_startup_reference_a_emits_error_before_ready() {
         vec![
             r#"{"type":"error","code":"invalid_reference_frequency","message":"invalid reference A frequency '399.0'"}"#.to_owned(),
         ]
+    );
+}
+
+#[test]
+fn invalid_startup_transposition_emits_error_before_ready() {
+    let output = run_helper_with_input(
+        "",
+        Some("idle"),
+        Some("ok"),
+        &["--transposition-semitones", "13"],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        lines,
+        vec![r#"{"type":"error","code":"invalid_transposition","message":"invalid transposition '13'"}"#.to_owned(),]
     );
 }
