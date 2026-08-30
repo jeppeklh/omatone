@@ -44,6 +44,8 @@ subdivisions, and a beat-one accent.
     pre-v2.0 UX milestone
 -   `docs/v2.0-implementation.md`: post-1.0 phases for broader tuning,
     interoperability, and power-user workflows
+-   `docs/v2.5-ui-ux-implementation.md`: focused UI/UX cleanup, naming,
+    and workflow phases after broader `v2.0` growth
 -   `docs/v1.5-ux-review.md`: archived UX review and rationale for the
     shipped `v1.5` cleanup
 -   `docs/v0.1-verification.md`: automated checks, deterministic helper
@@ -105,21 +107,53 @@ Not included:
 
 Install into Omarchy's plugin directory:
 
-1.  Copy or sync this repository to
-    `~/.config/omarchy/plugins/jeppeklh.omatune/`.
-2.  Run `bash scripts/build-helper-release.sh` from the plugin root to
-    stage `bin/omatune-helper`.
-3.  Run `omarchy plugin validate ~/.config/omarchy/plugins/jeppeklh.omatune`.
-4.  Add or reload the widget in the bar and open the popup once to verify
-    helper startup.
+1.  Build the packaged helper from the repository root:
 
-Update the installed plugin the same way: refresh the repository
-contents, rerun `bash scripts/build-helper-release.sh`, and rerun
-`omarchy plugin validate ...` before relying on the new build.
+    ```bash
+    bash scripts/build-helper-release.sh
+    ```
 
-Remove the plugin by deleting
-`~/.config/omarchy/plugins/jeppeklh.omatune/` and removing the widget
-from the bar configuration if it is still present.
+2.  Copy the plugin into Omarchy's user plugin directory.
+
+    Current local Omarchy validation rejects a symlinked plugin root, so
+    local development should use a copied directory rather than a
+    symlink.
+
+    ```bash
+    mkdir -p ~/.config/omarchy/plugins/jeppeklh.omatune
+    rsync -a --delete --exclude ".git/" --exclude "target/" ./ ~/.config/omarchy/plugins/jeppeklh.omatune/
+    ```
+
+3.  Validate and load the copied plugin:
+
+    ```bash
+    omarchy plugin validate ~/.config/omarchy/plugins/jeppeklh.omatune
+    omarchy shell shell rescanPlugins
+    omarchy plugin enable jeppeklh.omatune
+    omarchy restart shell
+    ```
+
+4.  Open the widget once to verify helper startup.
+
+Refresh the installed development copy after local changes:
+
+```bash
+bash scripts/build-helper-release.sh
+rsync -a --delete --exclude ".git/" --exclude "target/" ./ ~/.config/omarchy/plugins/jeppeklh.omatune/
+omarchy restart shell
+```
+
+Remove the copied plugin again:
+
+```bash
+omarchy plugin disable jeppeklh.omatune
+rm -rf ~/.config/omarchy/plugins/jeppeklh.omatune
+omarchy shell shell rescanPlugins
+omarchy restart shell
+```
+
+These removal commands delete only the copied plugin directory. They do
+not delete this repository.
 
 ## Helper CLI
 

@@ -294,18 +294,12 @@ BarWidget {
     parts.push(detectedConfidenceAvailable ? ("Confidence " + formatConfidencePercent(detectedConfidence)) : "Confidence --")
     return parts.join(" | ")
   }
-  readonly property string barPitchStatusText: {
-    if (!pitchActive) return ""
-    if (inTune) return "="
-    return detectedCents < 0 ? "-" : "+"
-  }
-  readonly property string barToneStateText: {
-    if (!toneActive) return ""
-    if (activeToneSceneKind === "chord") return "CHD"
-    if (activeToneSceneKind === "interval") return "DRN"
-    return "REF"
-  }
-  readonly property string barMeasureText: "CHD Bb8"
+  readonly property string barIconText: "\u266A"
+  readonly property bool barHelperIndicatorActive: helperRecoveryPending || helperState === "starting" || helperState === "active"
+  readonly property string barHelperIndicatorText: barHelperIndicatorActive ? "\u25CF" : "\u25CB"
+  readonly property string barToneIndicatorText: toneActive ? "\u25CF" : "\u25CB"
+  readonly property string barMetronomeIndicatorText: metronomeActive ? "\u25CF" : "\u25CB"
+  readonly property string barMeasureText: barIconText + " " + "\u25CF \u25CF \u25CF"
   readonly property string stateBadgeText: {
     if (helperRecoveryPending) return "Recovering"
     if (helperState === "error" || runtimeErrorMessage !== "") return "Error"
@@ -427,66 +421,20 @@ BarWidget {
       + " | A4 = " + formatReferenceA(referenceAHz)
   }
   readonly property string buttonText: {
-    if (helperRecoveryPending) return "RETRY"
-    if (helperState === "error" || runtimeErrorMessage !== "") return "ERR"
-    if (helperState === "inactive") return "OFF"
-    if (helperState === "starting") return "START"
-    if (pitchActive) return detectedNoteLabel + barPitchStatusText
-    if (toneActive) return barToneStateText + " " + activeToneNoteLabel
-    if (metronomeActive) return "MET"
-    if (signalState === "no_signal") return "QUIET"
-    return "TUNE"
+    return barIconText
+      + " " + barHelperIndicatorText
+      + " " + barToneIndicatorText
+      + " " + barMetronomeIndicatorText
   }
   readonly property string tooltipText: {
-    var lines = ["Omatune"]
-
-    if (helperRecoveryPending) {
-      lines.push("Recovering audio helper (" + helperRecoveryAttempt + "/" + helperRecoveryMaxAttempts + ")")
-      if (helperRecoveryMessage !== "") lines.push(helperRecoveryMessage)
-      return lines.join("\n")
-    }
-
-    if (helperState === "error" || runtimeErrorMessage !== "") {
-      lines.push("Audio error")
-      if (currentErrorSummaryText !== "") lines.push(currentErrorSummaryText)
-      return lines.join("\n")
-    }
-
-    if (helperState === "inactive") {
-      lines.push("Tuner off")
-      return lines.join("\n")
-    }
-
-    if (helperState === "starting") {
-      lines.push("Starting audio")
-      return lines.join("\n")
-    }
-
-    if (pitchActive) {
-      lines.push(detectedNoteLabel + "  " + formatSignedCents(detectedCents) + "  " + formatFrequency(detectedFrequencyHz) + " Hz")
-      if (temperamentActive) lines.push(selectedTemperamentLabelText)
-      return lines.join("\n")
-    }
-
-    if (toneActive) {
-      lines.push(activeTonePlaybackTypeText + ": " + activeTonePlaybackLabel)
-      if (activeToneVoiceSummaryText !== "") lines.push(activeToneVoiceSummaryText)
-      if (temperamentActive) lines.push(selectedTemperamentLabelText)
-      return lines.join("\n")
-    }
-
-    if (metronomeActive) {
-      lines.push("Metronome: " + metronomeBpm + " BPM | " + metronomeMeterLabel + " | " + metronomeSubdivisionLabel)
-      return lines.join("\n")
-    }
-
-    if (signalState === "no_signal") {
-      lines.push("No signal. Play a steady note.")
-      return lines.join("\n")
-    }
-
-    lines.push("Listening for pitch")
-    return lines.join("\n")
+    if (helperRecoveryPending) return "Omatune | Recovering audio"
+    if (helperState === "error" || runtimeErrorMessage !== "") return "Omatune | Audio error"
+    if (toneActive && metronomeActive) return "Omatune | Tone and metronome active"
+    if (toneActive) return "Omatune | Tone active"
+    if (metronomeActive) return "Omatune | Metronome active"
+    if (helperState === "starting") return "Omatune | Starting audio"
+    if (helperState === "active") return "Omatune | Listening"
+    return "Omatune"
   }
 
   implicitWidth: Math.max(button.implicitWidth, buttonSizer.implicitWidth)
@@ -3754,8 +3702,7 @@ BarWidget {
     tooltipText: root.tooltipText
     horizontalMargin: 7.5
     dimmed: root.helperState === "inactive"
-      || (root.helperState === "active" && !root.pitchActive && !root.toneActive && !root.metronomeActive && !root.hasAlert)
-    active: root.hasAlert || root.inTune || root.toneActive || root.metronomeActive
+    active: root.hasAlert || root.pitchActive || root.toneActive || root.metronomeActive || root.helperState === "starting"
     activeColor: root.hasAlert ? Color.urgent : Color.accent
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()

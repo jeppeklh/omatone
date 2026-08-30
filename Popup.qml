@@ -575,9 +575,20 @@ FocusScope {
             width: parent.width
             spacing: Style.space(10)
 
-            Flow {
+            Row {
               width: parent.width
-              spacing: Style.space(6)
+              spacing: Style.space(8)
+
+              Text {
+                width: Math.max(0, parent.width - powerButton.implicitWidth - parent.spacing)
+                textFormat: Text.PlainText
+                text: "Tune"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+                verticalAlignment: Text.AlignVCenter
+              }
 
               Button {
                 id: powerButton
@@ -591,6 +602,10 @@ FocusScope {
                 opacity: enabled ? 1.0 : 0.5
                 onClicked: if (root.hostWidget) root.hostWidget.toggleHelper()
               }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
             }
 
             Text {
@@ -754,17 +769,19 @@ FocusScope {
             width: parent.width
             spacing: Style.space(8)
 
-            Flow {
+            Row {
               width: parent.width
-              spacing: Style.space(6)
+              spacing: Style.space(8)
 
               Text {
+                width: Math.max(0, parent.width - favoriteSceneButton.implicitWidth - parent.spacing)
                 textFormat: Text.PlainText
-                text: "Quick switch"
+                text: "Presets"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
                 font.bold: true
+                verticalAlignment: Text.AlignVCenter
               }
 
               Button {
@@ -778,6 +795,20 @@ FocusScope {
                 focusable: true
                 onClicked: if (root.hostWidget) root.hostWidget.toggleCurrentQuickSwitchFavorite()
               }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Quick switch"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
             }
 
             Text {
@@ -1136,14 +1167,42 @@ FocusScope {
             width: parent.width
             spacing: Style.space(10)
 
-            Text {
+            Row {
               width: parent.width
-              textFormat: Text.PlainText
-              text: "Reference tone"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              font.bold: true
+              spacing: Style.space(8)
+
+              Text {
+                width: Math.max(0, parent.width - playToneButton.implicitWidth - parent.spacing)
+                textFormat: Text.PlainText
+                text: "Reference tone"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+                verticalAlignment: Text.AlignVCenter
+              }
+
+              Button {
+                id: playToneButton
+                text: root.hostWidget
+                  ? (root.hostWidget.selectedReferenceToneActive
+                    ? ("Stop " + root.hostWidget.selectedReferencePlaybackLabel)
+                    : (root.hostWidget.toneActive
+                      ? ("Retune to " + root.hostWidget.selectedReferencePlaybackLabel)
+                      : ("Play " + root.hostWidget.selectedReferencePlaybackLabel)))
+                  : "Play"
+                selected: root.hostWidget ? root.hostWidget.selectedReferenceToneActive : false
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.toggleSelectedReferenceTone()
+              }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
             }
 
             ButtonGroup {
@@ -1324,24 +1383,6 @@ FocusScope {
                 focusable: true
                 onClicked: if (root.hostWidget) root.hostWidget.changeReferenceOctave(1)
               }
-
-              Button {
-                id: playToneButton
-                text: root.hostWidget
-                  ? (root.hostWidget.selectedReferenceToneActive
-                    ? ("Stop " + root.hostWidget.selectedReferencePlaybackLabel)
-                    : (root.hostWidget.toneActive
-                      ? ("Retune to " + root.hostWidget.selectedReferencePlaybackLabel)
-                      : ("Play " + root.hostWidget.selectedReferencePlaybackLabel)))
-                  : "Play"
-                selected: root.hostWidget ? root.hostWidget.selectedReferenceToneActive : false
-                bordered: true
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.bodySmall
-                focusable: true
-                onClicked: if (root.hostWidget) root.hostWidget.toggleSelectedReferenceTone()
-              }
             }
           }
         }
@@ -1356,14 +1397,37 @@ FocusScope {
             width: parent.width
             spacing: Style.space(10)
 
-            Text {
+            Row {
               width: parent.width
-              textFormat: Text.PlainText
-              text: "Metronome"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              font.bold: true
+              spacing: Style.space(8)
+
+              Text {
+                width: Math.max(0, parent.width - metronomeToggleButton.implicitWidth - parent.spacing)
+                textFormat: Text.PlainText
+                text: "Metronome"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+                verticalAlignment: Text.AlignVCenter
+              }
+
+              Button {
+                id: metronomeToggleButton
+                text: root.hostWidget && root.hostWidget.metronomeActive ? "Stop" : "Start"
+                width: Math.max(Style.space(84), implicitWidth)
+                selected: root.hostWidget ? root.hostWidget.metronomeActive : false
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.toggleMetronome()
+              }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
             }
 
             Row {
@@ -1472,19 +1536,6 @@ FocusScope {
                 focusable: true
                 onClicked: if (root.hostWidget) root.hostWidget.tapMetronomeTempo()
               }
-
-              Button {
-                id: metronomeToggleButton
-                text: root.hostWidget && root.hostWidget.metronomeActive ? "Stop" : "Start"
-                width: Math.max(Style.space(84), implicitWidth)
-                selected: root.hostWidget ? root.hostWidget.metronomeActive : false
-                bordered: true
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.bodySmall
-                focusable: true
-                onClicked: if (root.hostWidget) root.hostWidget.toggleMetronome()
-              }
             }
 
             Column {
@@ -1575,27 +1626,33 @@ FocusScope {
             width: parent.width
             spacing: Style.space(10)
 
-            Text {
+            Row {
               width: parent.width
-              textFormat: Text.PlainText
-              text: "Recovery"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              font.bold: true
-            }
+              spacing: Style.space(8)
 
-            Button {
-              id: restartAudioButton
-              text: "Restart audio"
-              bordered: true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              focusable: true
-              enabled: root.hostWidget && root.hostWidget.helperState !== "starting"
-              opacity: enabled ? 1.0 : 0.5
-              onClicked: if (root.hostWidget) root.hostWidget.restartHelper()
+              Text {
+                width: Math.max(0, parent.width - restartAudioButton.implicitWidth - parent.spacing)
+                textFormat: Text.PlainText
+                text: "Advanced"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+                verticalAlignment: Text.AlignVCenter
+              }
+
+              Button {
+                id: restartAudioButton
+                text: "Restart audio"
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                enabled: root.hostWidget && root.hostWidget.helperState !== "starting"
+                opacity: enabled ? 1.0 : 0.5
+                onClicked: if (root.hostWidget) root.hostWidget.restartHelper()
+              }
             }
 
             PanelSeparator {
