@@ -54,6 +54,25 @@ subdivisions, and a beat-one accent.
     recovery validation, and install/update/remove smoke tests
 -   `docs/roadmap.md`: product roadmap beyond the initial release
 
+## Documentation Discipline
+
+Meaningful UI/UX changes must update the relevant docs in the same
+change, not later.
+
+At minimum:
+
+-   update this `README.md` when visible behavior or the local development
+    workflow changes;
+-   update `docs/v2.5-ui-ux-implementation.md` when the change belongs to
+    the current UI/UX cleanup track;
+-   update `docs/configuration.md`, `docs/protocol.md`, and
+    `docs/external-control.md` whenever persisted state, helper protocol,
+    or live-control behavior changes.
+
+Each meaningful UI/UX change should also include a short changelog-style
+summary in user-facing communication so the visible behavior change is
+called out explicitly.
+
 ## Current Scope
 
 -   Chromatic pitch detection
@@ -97,6 +116,20 @@ subdivisions, and a beat-one accent.
     input-side audio failures
 -   QML bar widget with a small native Rust helper
 
+## v2.5 UI/UX Summary
+
+-   The bar button is now a fixed music glyph with bounded helper, tone,
+    and metronome activity markers.
+-   Popup destinations now share a more consistent header, readout, and
+    primary-action layout.
+-   `Tune` now always auditions one exact note; `Tone` owns interval,
+    chord, voicing, and waveform state.
+-   Tone vocabulary now uses `Single`, `Interval`, `Chord`, `Close`, and
+    `Bass octave` for more musician-readable control labels.
+-   The tone preset surface now covers a curated interval set plus major,
+    minor, suspended, and seventh-chord families without turning into an
+    open-ended harmony editor.
+
 Not included:
 
 -   Instrument-specific pitch engines
@@ -105,6 +138,10 @@ Not included:
 -   Elaborate visual effects
 
 ## Install, Update, Remove
+
+Run these commands from the repository root. Treat this section as the
+source of truth for the current copy-pasteable local development
+install, refresh, and removal workflow.
 
 Install into Omarchy's plugin directory:
 

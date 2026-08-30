@@ -139,6 +139,26 @@ Additional Phase 4 helper check:
 cargo test --test helper_protocol helper_can_exit_after_ready_for_recovery_testing -- --exact
 ```
 
+### Phase 5 Local Development Workflow
+
+`README.md` is the source of truth for the current copy-pasteable local
+install, refresh, and removal commands.
+
+Phase 5 verification on this machine confirmed:
+
+-   `omarchy plugin validate` succeeds on a copied plugin directory under
+    `~/.config/omarchy/plugins/`;
+-   `omarchy plugin validate` rejects a symlinked plugin root with the
+    message `omarchy-plugin-validate: symlinks are not allowed inside a
+    plugin folder: <path>`;
+-   local development should therefore use a copied plugin directory plus
+    `rsync`, not a symlinked plugin root.
+
+To avoid touching the already installed
+`~/.config/omarchy/plugins/jeppeklh.omatune/` copy during verification,
+the Phase 5 smoke test used a temporary sibling directory and then
+removed it again after validation.
+
 Phase 6 deterministic helper checks:
 
 ```bash
