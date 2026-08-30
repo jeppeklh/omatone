@@ -4,6 +4,7 @@ pub const DEFAULT_ANALYSIS_WINDOW_SAMPLES: usize = 4_800;
 pub const DEFAULT_ANALYSIS_HOP_SAMPLES: usize = 2_048;
 pub const DEFAULT_MIN_FREQUENCY_HZ: f64 = 30.0;
 pub const DEFAULT_MAX_FREQUENCY_HZ: f64 = 1_200.0;
+pub const DEFAULT_ANALYSIS_HISTORY_FRAMES: usize = 12;
 
 const DEFAULT_SILENCE_RMS_THRESHOLD: f64 = 0.003;
 const DEFAULT_SILENCE_RELEASE_RMS_THRESHOLD: f64 = 0.0024;
@@ -26,9 +27,30 @@ pub struct PitchEstimate {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct PitchFrameAnalysis {
+    pub history_cents: Vec<f64>,
+    pub history_span_cents: f64,
+    pub held: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PitchFrame {
+    pub estimate: PitchEstimate,
+    pub detector_confidence: Option<f64>,
+    pub analysis: PitchFrameAnalysis,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct RawPitchEstimate {
     frequency_hz: f64,
     confidence: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct TrackingOutput {
+    estimate: PitchEstimate,
+    detector_confidence: Option<f64>,
+    held: bool,
 }
 
 pub struct PitchDetector {
@@ -47,12 +69,15 @@ pub struct PitchDetector {
     transient_level_rise_ratio: f64,
     candidate_confirm_frames: usize,
     unstable_grace_frames: usize,
+    analysis_history_frames: usize,
     difference: Vec<f64>,
     cumulative_normalized_difference: Vec<f64>,
     stable_estimate: Option<PitchEstimate>,
     pending_estimate: Option<PitchEstimate>,
     pending_match_frames: usize,
     unreliable_frames: usize,
+    display_history_note: Option<Note>,
+    display_history_cents: Vec<f64>,
     previous_level_rms: f64,
     last_reference_a_hz: Option<f64>,
     last_transposition_semitones: Option<i32>,
@@ -85,12 +110,15 @@ impl PitchDetector {
             transient_level_rise_ratio: DEFAULT_TRANSIENT_LEVEL_RISE_RATIO,
             candidate_confirm_frames: DEFAULT_CANDIDATE_CONFIRM_FRAMES,
             unstable_grace_frames: DEFAULT_UNSTABLE_GRACE_FRAMES,
+            analysis_history_frames: DEFAULT_ANALYSIS_HISTORY_FRAMES,
             difference: vec![0.0; max_tau + 1],
             cumulative_normalized_difference: vec![0.0; max_tau + 1],
             stable_estimate: None,
             pending_estimate: None,
             pending_match_frames: 0,
             unreliable_frames: 0,
+            display_history_note: None,
+            display_history_cents: Vec::with_capacity(DEFAULT_ANALYSIS_HISTORY_FRAMES),
             previous_level_rms: 0.0,
             last_reference_a_hz: None,
             last_transposition_semitones: None,
@@ -98,11 +126,11 @@ impl PitchDetector {
         }
     }
 
-    pub fn detect_pitch(
+    pub fn analyze_frame(
         &mut self,
         frame: &[f32],
         tuning_model: TuningModel,
-    ) -> Option<PitchEstimate> {
+    ) -> Option<PitchFrame> {
         let frame = frame.get(frame.len().checked_sub(self.window_size)?..)?;
         self.reset_for_tuning_change(tuning_model);
 
@@ -117,7 +145,28 @@ impl PitchDetector {
         let output_estimate = self.update_tracking(raw_estimate, level_rms);
         self.previous_level_rms = level_rms;
 
-        output_estimate
+        let output_estimate = output_estimate?;
+        self.record_display_history(&output_estimate.estimate);
+        let history_cents = self.display_history_cents.clone();
+
+        Some(PitchFrame {
+            estimate: output_estimate.estimate,
+            detector_confidence: output_estimate.detector_confidence,
+            analysis: PitchFrameAnalysis {
+                history_span_cents: cents_history_span(&history_cents),
+                history_cents,
+                held: output_estimate.held,
+            },
+        })
+    }
+
+    pub fn detect_pitch(
+        &mut self,
+        frame: &[f32],
+        tuning_model: TuningModel,
+    ) -> Option<PitchEstimate> {
+        self.analyze_frame(frame, tuning_model)
+            .map(|pitch_frame| pitch_frame.estimate)
     }
 
     fn detect_raw_pitch(
@@ -169,10 +218,11 @@ impl PitchDetector {
         &mut self,
         raw_estimate: Option<PitchEstimate>,
         level_rms: f64,
-    ) -> Option<PitchEstimate> {
+    ) -> Option<TrackingOutput> {
         let Some(raw_estimate) = raw_estimate else {
             return self.handle_unreliable_frame();
         };
+        let detector_confidence = Some(raw_estimate.confidence);
 
         let is_transient = self.is_transient(level_rms, raw_estimate.confidence);
 
@@ -181,40 +231,55 @@ impl PitchDetector {
         };
 
         if raw_estimate.note == stable_estimate.note {
-            return Some(self.accept_stable(raw_estimate));
+            return Some(TrackingOutput::fresh(
+                self.accept_stable(raw_estimate),
+                detector_confidence,
+            ));
         }
 
         if raw_estimate.confidence >= self.immediate_confidence_floor
             && !is_transient
             && !is_octave_variant(stable_estimate.note, raw_estimate.note)
         {
-            return Some(self.accept_stable(raw_estimate));
+            return Some(TrackingOutput::fresh(
+                self.accept_stable(raw_estimate),
+                detector_confidence,
+            ));
         }
 
         self.track_pending_candidate(&raw_estimate);
         self.unreliable_frames = 0;
 
         if self.pending_match_frames >= self.candidate_confirm_frames {
-            return Some(self.accept_stable(raw_estimate));
+            return Some(TrackingOutput::fresh(
+                self.accept_stable(raw_estimate),
+                detector_confidence,
+            ));
         }
 
-        Some(stable_estimate)
+        Some(TrackingOutput::held(stable_estimate, detector_confidence))
     }
 
     fn lock_from_idle(
         &mut self,
         raw_estimate: PitchEstimate,
         is_transient: bool,
-    ) -> Option<PitchEstimate> {
+    ) -> Option<TrackingOutput> {
         if raw_estimate.confidence >= self.immediate_confidence_floor && !is_transient {
-            return Some(self.accept_stable(raw_estimate));
+            return Some(TrackingOutput::fresh(
+                self.accept_stable(raw_estimate.clone()),
+                Some(raw_estimate.confidence),
+            ));
         }
 
         self.track_pending_candidate(&raw_estimate);
         self.unreliable_frames = 0;
 
         if self.pending_match_frames >= self.candidate_confirm_frames {
-            return Some(self.accept_stable(raw_estimate));
+            return Some(TrackingOutput::fresh(
+                self.accept_stable(raw_estimate.clone()),
+                Some(raw_estimate.confidence),
+            ));
         }
 
         None
@@ -237,14 +302,14 @@ impl PitchDetector {
             .unwrap_or(false)
     }
 
-    fn handle_unreliable_frame(&mut self) -> Option<PitchEstimate> {
+    fn handle_unreliable_frame(&mut self) -> Option<TrackingOutput> {
         self.pending_estimate = None;
         self.pending_match_frames = 0;
 
         if let Some(stable_estimate) = self.stable_estimate.clone() {
             if self.unreliable_frames < self.unstable_grace_frames {
                 self.unreliable_frames += 1;
-                return Some(stable_estimate);
+                return Some(TrackingOutput::held(stable_estimate, None));
             }
         }
 
@@ -265,6 +330,20 @@ impl PitchDetector {
         self.pending_estimate = None;
         self.pending_match_frames = 0;
         self.unreliable_frames = 0;
+        self.display_history_note = None;
+        self.display_history_cents.clear();
+    }
+
+    fn record_display_history(&mut self, estimate: &PitchEstimate) {
+        if self.display_history_note != Some(estimate.note) {
+            self.display_history_note = Some(estimate.note);
+            self.display_history_cents.clear();
+        }
+
+        self.display_history_cents.push(estimate.cents);
+        if self.display_history_cents.len() > self.analysis_history_frames {
+            self.display_history_cents.remove(0);
+        }
     }
 
     fn reset_for_tuning_change(&mut self, tuning_model: TuningModel) {
@@ -385,6 +464,24 @@ impl PitchDetector {
     }
 }
 
+impl TrackingOutput {
+    fn fresh(estimate: PitchEstimate, detector_confidence: Option<f64>) -> Self {
+        Self {
+            estimate,
+            detector_confidence,
+            held: false,
+        }
+    }
+
+    fn held(estimate: PitchEstimate, detector_confidence: Option<f64>) -> Self {
+        Self {
+            estimate,
+            detector_confidence,
+            held: true,
+        }
+    }
+}
+
 fn centered_rms(frame: &[f32]) -> f64 {
     if frame.is_empty() {
         return 0.0;
@@ -403,6 +500,21 @@ fn centered_rms(frame: &[f32]) -> f64 {
     energy.sqrt()
 }
 
+fn cents_history_span(history_cents: &[f64]) -> f64 {
+    if history_cents.is_empty() {
+        return 0.0;
+    }
+
+    let mut minimum_cents = history_cents[0];
+    let mut maximum_cents = history_cents[0];
+    for cents in history_cents.iter().copied().skip(1) {
+        minimum_cents = minimum_cents.min(cents);
+        maximum_cents = maximum_cents.max(cents);
+    }
+
+    maximum_cents - minimum_cents
+}
+
 fn is_octave_variant(left: Note, right: Note) -> bool {
     left != right && left.midi_number().rem_euclid(12) == right.midi_number().rem_euclid(12)
 }
@@ -410,8 +522,8 @@ fn is_octave_variant(left: Note, right: Note) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PitchDetector, PitchEstimate, DEFAULT_ANALYSIS_WINDOW_SAMPLES, DEFAULT_MAX_FREQUENCY_HZ,
-        DEFAULT_MIN_FREQUENCY_HZ,
+        PitchDetector, PitchEstimate, PitchFrame, DEFAULT_ANALYSIS_WINDOW_SAMPLES,
+        DEFAULT_MAX_FREQUENCY_HZ, DEFAULT_MIN_FREQUENCY_HZ,
     };
     use crate::note::{TuningModel, DEFAULT_REFERENCE_A_HZ};
     use crate::reference_tone::DEFAULT_SAMPLE_RATE_HZ;
@@ -445,6 +557,14 @@ mod tests {
             .detect_pitch(frame, tuning_model)
             .or_else(|| detector.detect_pitch(frame, tuning_model))
             .expect("expected pitch estimate after stabilization")
+    }
+
+    fn analyze_locked_pitch(detector: &mut PitchDetector, frame: &[f32]) -> PitchFrame {
+        let tuning_model = TuningModel::new(DEFAULT_REFERENCE_A_HZ, 0).unwrap();
+        detector
+            .analyze_frame(frame, tuning_model)
+            .or_else(|| detector.analyze_frame(frame, tuning_model))
+            .expect("expected pitch analysis after stabilization")
     }
 
     fn default_tuning_model() -> TuningModel {
@@ -693,5 +813,121 @@ mod tests {
             .detect_pitch(&a1_frame, default_tuning_model())
             .unwrap();
         assert_eq!(switched.note.to_string(), "A1");
+    }
+
+    #[test]
+    fn tracks_recent_cents_history_and_span_for_stable_pitch() {
+        let mut detector = PitchDetector::new(
+            DEFAULT_SAMPLE_RATE_HZ,
+            DEFAULT_MIN_FREQUENCY_HZ,
+            DEFAULT_MAX_FREQUENCY_HZ,
+        );
+        let centered_frame = generate_sine_wave(
+            440.0,
+            DEFAULT_SAMPLE_RATE_HZ,
+            DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2,
+            0.5,
+        );
+        let sharp_frame = generate_sine_wave(
+            440.0 * 2.0_f64.powf(4.0 / 1200.0),
+            DEFAULT_SAMPLE_RATE_HZ,
+            DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2,
+            0.5,
+        );
+        let flat_frame = generate_sine_wave(
+            440.0 * 2.0_f64.powf(-3.0 / 1200.0),
+            DEFAULT_SAMPLE_RATE_HZ,
+            DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2,
+            0.5,
+        );
+
+        let initial = analyze_locked_pitch(&mut detector, &centered_frame);
+        assert_eq!(initial.analysis.history_cents.len(), 1);
+        assert_close(initial.analysis.history_span_cents, 0.0, 0.01);
+
+        detector
+            .analyze_frame(&sharp_frame, default_tuning_model())
+            .expect("expected sharp frame to stay locked");
+        let flat_analysis = detector
+            .analyze_frame(&flat_frame, default_tuning_model())
+            .expect("expected flat frame to stay locked");
+
+        assert_eq!(flat_analysis.analysis.history_cents.len(), 3);
+        assert!(flat_analysis.analysis.history_span_cents > 2.0);
+        assert!(!flat_analysis.analysis.held);
+    }
+
+    #[test]
+    fn marks_pending_note_changes_as_held_until_confirmed() {
+        let mut detector = PitchDetector::new(
+            DEFAULT_SAMPLE_RATE_HZ,
+            DEFAULT_MIN_FREQUENCY_HZ,
+            DEFAULT_MAX_FREQUENCY_HZ,
+        );
+        let a2_frame = generate_sine_wave(
+            110.0,
+            DEFAULT_SAMPLE_RATE_HZ,
+            DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2,
+            0.5,
+        );
+        let a1_frame = generate_sine_wave(
+            55.0,
+            DEFAULT_SAMPLE_RATE_HZ,
+            DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2,
+            0.5,
+        );
+
+        assert_eq!(
+            analyze_locked_pitch(&mut detector, &a2_frame)
+                .estimate
+                .note
+                .to_string(),
+            "A2"
+        );
+
+        let held = detector
+            .analyze_frame(&a1_frame, default_tuning_model())
+            .expect("expected first octave-variant frame to hold the current note");
+        assert_eq!(held.estimate.note.to_string(), "A2");
+        assert!(held.analysis.held);
+        assert!(held.detector_confidence.is_some());
+
+        let switched = detector
+            .analyze_frame(&a1_frame, default_tuning_model())
+            .expect("expected second octave-variant frame to switch notes");
+        assert_eq!(switched.estimate.note.to_string(), "A1");
+        assert!(!switched.analysis.held);
+        assert_eq!(switched.analysis.history_cents.len(), 1);
+    }
+
+    #[test]
+    fn marks_grace_frame_holds_without_a_fresh_confidence() {
+        let mut detector = PitchDetector::new(
+            DEFAULT_SAMPLE_RATE_HZ,
+            DEFAULT_MIN_FREQUENCY_HZ,
+            DEFAULT_MAX_FREQUENCY_HZ,
+        );
+        let stable_frame = generate_sine_wave(
+            110.0,
+            DEFAULT_SAMPLE_RATE_HZ,
+            DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2,
+            0.5,
+        );
+        let noisy_frame = generate_noise(DEFAULT_ANALYSIS_WINDOW_SAMPLES * 2, 0.35);
+
+        assert_eq!(
+            analyze_locked_pitch(&mut detector, &stable_frame)
+                .estimate
+                .note
+                .to_string(),
+            "A2"
+        );
+
+        let held = detector
+            .analyze_frame(&noisy_frame, default_tuning_model())
+            .expect("expected one grace frame to hold the stable note");
+        assert_eq!(held.estimate.note.to_string(), "A2");
+        assert!(held.analysis.held);
+        assert_eq!(held.detector_confidence, None);
     }
 }

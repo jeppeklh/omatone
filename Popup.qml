@@ -679,6 +679,128 @@ FocusScope {
                 }
               }
             }
+
+            Item {
+              visible: root.hostWidget ? root.hostWidget.analysisViewsEnabled : false
+              width: parent.width
+              height: visible ? analysisColumn.implicitHeight : 0
+
+              Column {
+                id: analysisColumn
+                width: parent.width
+                spacing: Style.space(8)
+
+                PanelSeparator {
+                  foreground: root.foreground
+                }
+
+                Text {
+                  width: parent.width
+                  textFormat: Text.PlainText
+                  text: "Analysis"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                }
+
+                Text {
+                  width: parent.width
+                  textFormat: Text.PlainText
+                  text: root.hostWidget ? root.hostWidget.pitchAnalysisSummaryText : ""
+                  color: root.quietTextColor
+                  opacity: root.secondaryTextOpacity
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Rectangle {
+                  id: analysisTracePanel
+                  width: parent.width
+                  height: Style.space(72)
+                  radius: Style.cornerRadius
+                  color: Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.05)
+                  border.width: 1
+                  border.color: Util.alpha(root.foreground, root.highContrast ? 0.48 : 0.22)
+                  readonly property bool hasTrace: root.hostWidget ? root.hostWidget.hasDetectedPitchHistory : false
+
+                  Rectangle {
+                    width: parent.width
+                    height: Math.max(Style.space(8), parent.height * 0.18)
+                    radius: parent.radius
+                    anchors.centerIn: parent
+                    color: Util.alpha(root.foreground, root.highContrast ? 0.14 : 0.08)
+                  }
+
+                  Rectangle {
+                    width: parent.width
+                    height: root.highContrast ? 2 : 1
+                    anchors.centerIn: parent
+                    color: Util.alpha(root.foreground, root.highContrast ? 0.72 : 0.38)
+                  }
+
+                  Row {
+                    id: analysisHistoryRow
+                    anchors.fill: parent
+                    anchors.margins: Style.space(10)
+                    spacing: Style.space(4)
+                    visible: analysisTracePanel.hasTrace
+
+                    Repeater {
+                      id: analysisHistoryRepeater
+                      model: root.hostWidget ? root.hostWidget.detectedPitchHistoryCents : []
+
+                      Item {
+                        required property int index
+                        required property var modelData
+
+                        width: Math.max(Style.space(8), (analysisHistoryRow.width - analysisHistoryRow.spacing * Math.max(0, analysisHistoryRepeater.count - 1)) / Math.max(1, analysisHistoryRepeater.count))
+                        height: analysisHistoryRow.height
+                        readonly property real centsValue: Math.max(-50, Math.min(50, Number(modelData)))
+                        readonly property real halfHeight: height / 2
+                        readonly property real maxBarHeight: Math.max(0, halfHeight - Style.space(4))
+                        readonly property real barHeight: Math.max(Style.space(4), Math.abs(centsValue) / 50 * maxBarHeight)
+                        readonly property bool latestPoint: index === analysisHistoryRepeater.count - 1
+
+                        Rectangle {
+                          width: root.highContrast ? Math.max(4, parent.width * 0.60) : Math.max(3, parent.width * 0.45)
+                          height: parent.barHeight
+                          radius: width / 2
+                          anchors.horizontalCenter: parent.horizontalCenter
+                          y: parent.centsValue >= 0 ? (parent.halfHeight - height) : parent.halfHeight
+                          color: parent.latestPoint
+                            ? (root.hostWidget && root.hostWidget.detectedPitchHeld ? Color.urgent : Color.accent)
+                            : Util.alpha(root.foreground, root.highContrast ? 0.72 : 0.40)
+                        }
+                      }
+                    }
+                  }
+
+                  Text {
+                    anchors.centerIn: parent
+                    visible: !analysisTracePanel.hasTrace
+                    textFormat: Text.PlainText
+                    text: "Play a steady note"
+                    color: root.foreground
+                    opacity: root.secondaryTextOpacity
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  visible: root.hostWidget ? root.hostWidget.detectedPitchHeld : false
+                  textFormat: Text.PlainText
+                  text: "The helper is holding the last stable note while it waits for a cleaner confirming frame."
+                  color: Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+              }
+            }
           }
         }
 
@@ -1683,6 +1805,16 @@ FocusScope {
               foreground: root.foreground
               fontFamily: root.fontFamily
               onClicked: if (root.hostWidget) root.hostWidget.toggleReducedMotionMode()
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Analysis views"
+              description: "Show helper-owned confidence, lock-hold state, and a recent cents trace below Quick tune."
+              checked: root.hostWidget ? root.hostWidget.analysisViewsEnabled : false
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: if (root.hostWidget) root.hostWidget.toggleAnalysisViewsEnabled()
             }
 
             PanelSeparator {

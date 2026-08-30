@@ -83,7 +83,12 @@ Emitted when the helper has a usable pitch estimate.
       "note": "G3",
       "frequency_hz": 196.38,
       "cents": 3.4,
-      "confidence": 0.94
+      "confidence": 0.94,
+      "analysis": {
+        "history_cents": [1.1, 2.4, 3.4],
+        "history_span_cents": 2.3,
+        "held": false
+      }
     }
 
 Fields:
@@ -96,11 +101,25 @@ Fields:
 -   `cents`: signed deviation from the nearest note; negative is flat
     and positive is sharp
 -   `confidence`: optional normalized detector confidence from 0 to 1
+-   `analysis`: optional helper-owned advanced-analysis snapshot
 
-The UI must not assume `confidence` is always present.
+When `analysis` is present:
 
-The current helper emits `confidence` on `pitch` messages when a usable
-estimate is available.
+-   `history_cents` is a bounded recent cents trace for the currently
+    displayed note, oldest first and newest last;
+-   `history_span_cents` is the max-minus-min spread across that recent
+    trace;
+-   `held` is `true` when the helper is intentionally holding the last
+    stable displayed pitch through one unstable or not-yet-confirmed
+    analysis hop.
+
+The UI must not assume `confidence` or `analysis` are always present.
+
+The current helper emits `analysis` on `pitch` messages and emits
+`confidence` whenever the current analysis hop produced a usable raw
+estimate. When the displayed pitch is being held through one unreliable
+grace hop, the helper may omit `confidence` while still emitting the held
+displayed note.
 
 The current helper applies short-term Rust-side stabilization before
 emitting `pitch`, so a note change that looks like a transient or an
@@ -680,7 +699,7 @@ revision.
 Valid stdout:
 
     {"type":"ready"}
-    {"type":"pitch","note":"E2","frequency_hz":82.31,"cents":0.1,"confidence":0.97}
+    {"type":"pitch","note":"E2","frequency_hz":82.31,"cents":0.1,"confidence":0.97,"analysis":{"history_cents":[-0.8,-0.2,0.1],"history_span_cents":0.9,"held":false}}
     {"type":"tone_started","note":"A2","frequency_hz":110.0}
     {"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}
     {"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}

@@ -29,6 +29,10 @@ BarWidget {
   property real detectedFrequencyHz: 0
   property real detectedCents: 0
   property real detectedConfidence: 0
+  property bool detectedConfidenceAvailable: false
+  property var detectedPitchHistoryCents: []
+  property real detectedPitchHistorySpanCents: 0
+  property bool detectedPitchHeld: false
   property string activeToneNote: ""
   property real activeToneFrequencyHz: 0
   property var activeToneIntervalsSemitones: []
@@ -54,6 +58,7 @@ BarWidget {
   property string activeToneSceneId: "blend"
   property bool highContrastMode: false
   property bool reducedMotionMode: false
+  property bool analysisViewsEnabled: false
   property var pendingCommandLines: []
   property string lastProtocolType: ""
   property string lastProtocolLine: ""
@@ -99,9 +104,10 @@ BarWidget {
   readonly property int minimumMetronomeBpm: 20
   readonly property int maximumMetronomeBpm: 300
   readonly property int maximumReferenceIntervalSemitones: 24
+  readonly property int maximumPitchAnalysisHistoryPoints: 12
   readonly property int maximumFavoriteQuickSwitches: 6
   readonly property int maximumRecentQuickSwitches: 6
-  readonly property int settingsConfigVersion: 4
+  readonly property int settingsConfigVersion: 5
   readonly property int helperRecoveryMaxAttempts: 5
   readonly property int defaultMetronomeBpm: 100
   readonly property int defaultMetronomeBeatsPerBar: 4
@@ -185,6 +191,7 @@ BarWidget {
   readonly property var temperamentPackSections: temperamentPackSectionsForDisplay(allTemperamentPacks)
   readonly property var tuningPresetGroups: presetGroupsForDisplay(allPresetPacks)
   readonly property bool pitchActive: signalState === "pitch"
+  readonly property bool hasDetectedPitchHistory: detectedPitchHistoryCents.length > 0
   readonly property bool toneActive: activeToneNote !== ""
   readonly property bool inTune: pitchActive && Math.abs(detectedCents) <= 5
   readonly property bool hasAlert: helperRecoveryPending || helperState === "error" || runtimeErrorMessage !== ""
@@ -276,6 +283,16 @@ BarWidget {
     if (!pitchActive) return ""
     if (inTune) return "In tune"
     return detectedCents < 0 ? "Tune up" : "Tune down"
+  }
+  readonly property string pitchAnalysisSummaryText: {
+    if (!analysisViewsEnabled) return ""
+    if (!pitchActive || !hasDetectedPitchHistory)
+      return "Play a steady note to populate the recent helper trace."
+
+    var parts = [detectedPitchHeld ? "Lock held" : "Live lock"]
+    parts.push("Spread " + formatPitchHistorySpan(detectedPitchHistorySpanCents))
+    parts.push(detectedConfidenceAvailable ? ("Confidence " + formatConfidencePercent(detectedConfidence)) : "Confidence --")
+    return parts.join(" | ")
   }
   readonly property string barPitchStatusText: {
     if (!pitchActive) return ""
@@ -514,6 +531,15 @@ BarWidget {
   function formatFrequency(value) {
     var numeric = finiteNumber(value, 0)
     return numeric > 0 ? numeric.toFixed(2) : "0.00"
+  }
+
+  function formatConfidencePercent(value) {
+    return Math.round(clampNumber(value, 0, 1, 0) * 100) + "%"
+  }
+
+  function formatPitchHistorySpan(value) {
+    var numeric = clampNumber(value, 0, 100, 0)
+    return (numeric >= 10 ? numeric.toFixed(0) : numeric.toFixed(1)) + "c"
   }
 
   function formatReferenceA(value) {
@@ -1328,6 +1354,20 @@ BarWidget {
     }]
   }
 
+  function normalizePitchHistoryCents(values) {
+    if (!Array.isArray(values)) return []
+
+    var normalized = []
+    for (var index = 0; index < values.length; index++) {
+      var numeric = Number(values[index])
+      if (!isFinite(numeric)) continue
+      normalized.push(roundToFourDecimals(Math.max(-50, Math.min(50, numeric))))
+    }
+
+    if (normalized.length <= maximumPitchAnalysisHistoryPoints) return normalized
+    return normalized.slice(normalized.length - maximumPitchAnalysisHistoryPoints)
+  }
+
   function normalizeBooleanSetting(value, fallback) {
     if (value === true || value === false) return value
 
@@ -1796,6 +1836,7 @@ BarWidget {
       midiInputPortName: normalizeMidiInputPortName(source.midiInputPortName),
       highContrastMode: normalizeBooleanSetting(source.highContrastMode, false),
       reducedMotionMode: normalizeBooleanSetting(source.reducedMotionMode, false),
+      analysisViewsEnabled: normalizeBooleanSetting(source.analysisViewsEnabled, false),
       favoriteQuickSwitches: filteredQuickSwitchSceneList(source.favoriteQuickSwitches, null, maximumFavoriteQuickSwitches),
       recentQuickSwitches: filteredQuickSwitchSceneList(source.recentQuickSwitches, null, maximumRecentQuickSwitches),
       importedTemperamentPacks: normalizedImportedTemperamentPacks,
@@ -1823,6 +1864,7 @@ BarWidget {
       midiInputPortName: midiInputPortName,
       highContrastMode: highContrastMode,
       reducedMotionMode: reducedMotionMode,
+      analysisViewsEnabled: analysisViewsEnabled,
       favoriteQuickSwitches: favoriteQuickSwitches,
       recentQuickSwitches: recentQuickSwitches,
       importedTemperamentPacks: importedTemperamentPacks,
@@ -1878,6 +1920,7 @@ BarWidget {
     midiInputPortName = settings.midiInputPortName
     highContrastMode = settings.highContrastMode
     reducedMotionMode = settings.reducedMotionMode
+    analysisViewsEnabled = settings.analysisViewsEnabled
     favoriteQuickSwitches = settings.favoriteQuickSwitches
     recentQuickSwitches = settings.recentQuickSwitches
     importedTemperamentPacks = settings.importedTemperamentPacks
@@ -2938,6 +2981,18 @@ BarWidget {
     setReducedMotionMode(!reducedMotionMode)
   }
 
+  function setAnalysisViewsEnabled(value) {
+    var next = !!value
+    if (next === analysisViewsEnabled) return
+
+    analysisViewsEnabled = next
+    persistWidgetSettings()
+  }
+
+  function toggleAnalysisViewsEnabled() {
+    setAnalysisViewsEnabled(!analysisViewsEnabled)
+  }
+
   function setSelectedReferenceMidiNumber(midiNumber) {
     var selection = normalizedReferenceSelection(
       midiNumber,
@@ -2977,6 +3032,10 @@ BarWidget {
     detectedFrequencyHz = 0
     detectedCents = 0
     detectedConfidence = 0
+    detectedConfidenceAvailable = false
+    detectedPitchHistoryCents = []
+    detectedPitchHistorySpanCents = 0
+    detectedPitchHeld = false
   }
 
   function setNoSignal() {
@@ -2985,6 +3044,10 @@ BarWidget {
     detectedFrequencyHz = 0
     detectedCents = 0
     detectedConfidence = 0
+    detectedConfidenceAvailable = false
+    detectedPitchHistoryCents = []
+    detectedPitchHistorySpanCents = 0
+    detectedPitchHeld = false
   }
 
   function clearToneState() {
@@ -3343,13 +3406,22 @@ BarWidget {
   }
 
   function handlePitchMessage(message) {
+    var confidenceValue = Number(message.confidence)
+    var analysis = message.analysis && typeof message.analysis === "object" && !Array.isArray(message.analysis)
+      ? message.analysis
+      : null
+
     helperState = "active"
     helperReadySeen = true
     signalState = "pitch"
     detectedNote = String(message.note || "")
     detectedFrequencyHz = Math.max(0, finiteNumber(message.frequency_hz, 0))
     detectedCents = clampNumber(message.cents, -50, 50, 0)
-    detectedConfidence = clampNumber(message.confidence, 0, 1, 0)
+    detectedConfidenceAvailable = isFinite(confidenceValue)
+    detectedConfidence = detectedConfidenceAvailable ? clampNumber(confidenceValue, 0, 1, 0) : 0
+    detectedPitchHistoryCents = normalizePitchHistoryCents(analysis ? analysis.history_cents : [])
+    detectedPitchHistorySpanCents = clampNumber(analysis ? analysis.history_span_cents : 0, 0, 100, 0)
+    detectedPitchHeld = analysis ? analysis.held === true : false
     if (isOutputErrorCode(runtimeErrorCode)) clearRuntimeError()
   }
 

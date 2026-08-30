@@ -1,5 +1,5 @@
 use omatune::note::{Note, Temperament, DEFAULT_REFERENCE_A_HZ};
-use omatune::protocol::UiMessage;
+use omatune::protocol::{PitchAnalysis, UiMessage};
 use omatune::reference_tone::ReferenceToneSceneId;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Output, Stdio};
@@ -650,7 +650,7 @@ fn simulated_pitch_is_emitted_after_ready() {
     assert_eq!(lines[0], r#"{"type":"ready"}"#);
     assert_eq!(
         lines[1],
-        r#"{"type":"pitch","note":"A4","frequency_hz":440.0,"cents":0.0,"confidence":1.0}"#
+        r#"{"type":"pitch","note":"A4","frequency_hz":440.0,"cents":0.0,"confidence":1.0,"analysis":{"history_cents":[0.0],"history_span_cents":0.0,"held":false}}"#
     );
 }
 
@@ -669,7 +669,7 @@ fn startup_reference_a_argument_calibrates_initial_pitch_and_tone() {
     assert_eq!(lines[0], r#"{"type":"ready"}"#);
     assert_eq!(lines.len(), 3);
     assert!(lines[1..].contains(
-        &r#"{"type":"pitch","note":"A4","frequency_hz":442.0,"cents":0.0,"confidence":1.0}"#
+        &r#"{"type":"pitch","note":"A4","frequency_hz":442.0,"cents":0.0,"confidence":1.0,"analysis":{"history_cents":[0.0],"history_span_cents":0.0,"held":false}}"#
             .to_owned()
     ));
     assert!(lines[1..]
@@ -691,7 +691,7 @@ fn startup_transposition_argument_relabels_initial_pitch_and_tone() {
     assert_eq!(lines[0], r#"{"type":"ready"}"#);
     assert_eq!(lines.len(), 3);
     assert!(lines[1..].contains(
-        &r#"{"type":"pitch","note":"B4","frequency_hz":440.0,"cents":0.0,"confidence":1.0}"#
+        &r#"{"type":"pitch","note":"B4","frequency_hz":440.0,"cents":0.0,"confidence":1.0,"analysis":{"history_cents":[0.0],"history_span_cents":0.0,"held":false}}"#
             .to_owned()
     ));
     assert!(lines[1..]
@@ -837,6 +837,11 @@ fn startup_temperament_argument_calibrates_initial_pitch_and_tone() {
         frequency_hz: c4_frequency_hz,
         cents: 0.0,
         confidence: Some(1.0),
+        analysis: Some(PitchAnalysis {
+            history_cents: vec![0.0],
+            history_span_cents: 0.0,
+            held: false,
+        }),
     }
     .to_json_line()
     .unwrap();

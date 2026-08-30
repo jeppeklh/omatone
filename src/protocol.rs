@@ -130,6 +130,13 @@ pub struct ToneVoice {
     pub frequency_hz: f64,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PitchAnalysis {
+    pub history_cents: Vec<f64>,
+    pub history_span_cents: f64,
+    pub held: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
@@ -159,6 +166,8 @@ pub enum UiMessage {
         cents: f64,
         #[serde(skip_serializing_if = "Option::is_none")]
         confidence: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        analysis: Option<PitchAnalysis>,
     },
     NoSignal,
     ToneStarted {
@@ -893,7 +902,7 @@ mod tests {
     use super::{
         parse_command, parse_external_control_command, Command, CommandParseError, ErrorCode,
         ExternalControlCommand, ExternalControlParseError, ExternalReferenceChordId,
-        ExternalReferencePlaybackMode, ToneVoice, UiMessage,
+        ExternalReferencePlaybackMode, PitchAnalysis, ToneVoice, UiMessage,
     };
     use crate::metronome::{
         MetronomeState, DEFAULT_METRONOME_BEATS_PER_BAR, DEFAULT_METRONOME_BEAT_UNIT,
@@ -1151,6 +1160,22 @@ mod tests {
         assert_eq!(
             UiMessage::Ready.to_json_line().unwrap(),
             r#"{"type":"ready"}"#
+        );
+        assert_eq!(
+            UiMessage::Pitch {
+                note: "A4".parse().unwrap(),
+                frequency_hz: 440.0,
+                cents: -1.4,
+                confidence: Some(0.94),
+                analysis: Some(PitchAnalysis {
+                    history_cents: vec![-2.8, -1.9, -1.4],
+                    history_span_cents: 1.4,
+                    held: false,
+                }),
+            }
+            .to_json_line()
+            .unwrap(),
+            r#"{"type":"pitch","note":"A4","frequency_hz":440.0,"cents":-1.4,"confidence":0.94,"analysis":{"history_cents":[-2.8,-1.9,-1.4],"history_span_cents":1.4,"held":false}}"#
         );
         assert_eq!(
             UiMessage::ToneStarted {

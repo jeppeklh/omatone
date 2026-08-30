@@ -4,7 +4,7 @@ use crate::pitch_detection::{
     PitchDetector, DEFAULT_ANALYSIS_HOP_SAMPLES, DEFAULT_ANALYSIS_WINDOW_SAMPLES,
     DEFAULT_MAX_FREQUENCY_HZ, DEFAULT_MIN_FREQUENCY_HZ,
 };
-use crate::protocol::{ErrorCode, UiMessage};
+use crate::protocol::{ErrorCode, PitchAnalysis, UiMessage};
 use crate::protocol_io::ProtocolWriter;
 use crate::reference_tone::DEFAULT_SAMPLE_RATE_HZ;
 use libpulse_binding as pulse;
@@ -254,6 +254,11 @@ fn input_mock_worker_loop(
                 frequency_hz,
                 cents: nearest.cents,
                 confidence: Some(1.0),
+                analysis: Some(PitchAnalysis {
+                    history_cents: vec![nearest.cents],
+                    history_span_cents: 0.0,
+                    held: false,
+                }),
             }) {
                 eprintln!("omatune-helper: failed to emit mock pitch message: {error}");
             }
@@ -370,7 +375,7 @@ fn emit_detector_update(
 ) {
     let tuning_model = shared_config.tuning_model();
 
-    let Some(estimate) = detector.detect_pitch(analysis_buffer, tuning_model) else {
+    let Some(pitch_frame) = detector.analyze_frame(analysis_buffer, tuning_model) else {
         if *last_had_pitch != Some(false) {
             if let Err(error) = protocol_writer.write_message(&UiMessage::NoSignal) {
                 eprintln!("omatune-helper: failed to emit no-signal message: {error}");
@@ -381,10 +386,15 @@ fn emit_detector_update(
     };
 
     if let Err(error) = protocol_writer.write_message(&UiMessage::Pitch {
-        note: estimate.note,
-        frequency_hz: estimate.frequency_hz,
-        cents: estimate.cents,
-        confidence: Some(estimate.confidence),
+        note: pitch_frame.estimate.note,
+        frequency_hz: pitch_frame.estimate.frequency_hz,
+        cents: pitch_frame.estimate.cents,
+        confidence: pitch_frame.detector_confidence,
+        analysis: Some(PitchAnalysis {
+            history_cents: pitch_frame.analysis.history_cents,
+            history_span_cents: pitch_frame.analysis.history_span_cents,
+            held: pitch_frame.analysis.held,
+        }),
     }) {
         eprintln!("omatune-helper: failed to emit pitch message: {error}");
     }

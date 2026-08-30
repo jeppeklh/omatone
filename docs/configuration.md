@@ -3,7 +3,8 @@
 ## Purpose
 
 This document defines the persisted user-facing configuration introduced
-in Phase 1, extended in Phase 2, and extended again in Phase 3.
+in Phase 1, extended in Phase 2, extended again in Phase 3, and extended
+again in Phase 4.
 
 It covers:
 
@@ -25,7 +26,7 @@ For a bar widget instance, the entry shape is:
 ```json
 {
   "id": "jeppeklh.omatune",
-  "configVersion": 4,
+  "configVersion": 5,
   "referenceAHz": 440.0,
   "transpositionSemitones": 0,
   "noteSpelling": "sharps",
@@ -44,6 +45,7 @@ For a bar widget instance, the entry shape is:
   "midiInputPortName": "",
   "highContrastMode": false,
   "reducedMotionMode": false,
+  "analysisViewsEnabled": false,
   "favoriteQuickSwitches": [],
   "recentQuickSwitches": [],
   "importedTemperamentPacks": [],
@@ -57,7 +59,7 @@ settings file.
 
 ## Supported Fields
 
--   `configVersion`: integer schema version. Current value: `4`.
+-   `configVersion`: integer schema version. Current value: `5`.
 -   `referenceAHz`: reference A frequency in Hz.
 -   `transpositionSemitones`: integer semitone offset from sounding pitch
     to displayed/selected note names.
@@ -79,6 +81,8 @@ settings file.
     listener.
 -   `highContrastMode`: boolean display-preference flag.
 -   `reducedMotionMode`: boolean display-preference flag.
+-   `analysisViewsEnabled`: whether the opt-in helper-owned analysis card
+    is shown in `Tune`.
 -   `favoriteQuickSwitches`: bounded list of saved workflow snapshots.
 -   `recentQuickSwitches`: bounded list of recent workflow snapshots.
 -   `importedTemperamentPacks`: locally installed normalized temperament
@@ -127,7 +131,7 @@ Pack import and export are separate from the configuration editor.
 
 When no persisted configuration exists, Omatune uses:
 
--   `configVersion = 4`
+-   `configVersion = 5`
 -   `referenceAHz = 440.0`
 -   `transpositionSemitones = 0`
 -   `noteSpelling = "sharps"`
@@ -146,6 +150,7 @@ When no persisted configuration exists, Omatune uses:
 -   `midiInputPortName = ""`
 -   `highContrastMode = false`
 -   `reducedMotionMode = false`
+-   `analysisViewsEnabled = false`
 -   `favoriteQuickSwitches = []`
 -   `recentQuickSwitches = []`
 -   `importedTemperamentPacks = []`
@@ -210,7 +215,8 @@ the supported metronome presets:
 `midiInputPortName` is a trimmed string. An empty string means no MIDI
 input port is selected.
 
-`highContrastMode` and `reducedMotionMode` must be boolean values.
+`highContrastMode`, `reducedMotionMode`, and `analysisViewsEnabled` must
+be boolean values.
 
 `favoriteQuickSwitches` and `recentQuickSwitches` must be arrays of at
 most six normalized workflow snapshots.
@@ -300,11 +306,14 @@ playback is requested:
 
 Preset selection, saved quick-switch workflow snapshots, note-spelling
 preference, metronome BPM, meter, subdivision, and display
-accessibility preferences remain UI-owned state. Imported preset packs
-and temperament packs are persisted by the UI, but their validation and
-normalization are Rust-owned. Reference A, transposition, and the active
-temperament feed one helper-owned pitch model without forking the
-underlying chromatic tuner into instrument-specific engines.
+accessibility preferences remain UI-owned state. The `analysisViewsEnabled`
+preference only controls whether the opt-in diagnostic card is shown; the
+card's live pitch history and hold state still come from the helper.
+Imported preset packs and temperament packs are persisted by the UI, but
+their validation and normalization are Rust-owned. Reference A,
+transposition, and the active temperament feed one helper-owned pitch
+model without forking the underlying chromatic tuner into
+instrument-specific engines.
 
 ## Migration Rules
 
@@ -329,6 +338,9 @@ arrays.
 
 The later transposition field is additive under that same schema
 version: missing `transpositionSemitones` simply loads as `0`.
+
+The later Phase 4 analysis-view preference is additive under that same
+schema version: missing `analysisViewsEnabled` simply loads as `false`.
 
 ### From v1.x configuration version 1
 
