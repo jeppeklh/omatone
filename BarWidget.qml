@@ -60,6 +60,8 @@ BarWidget {
   property bool reducedMotionMode: false
   property bool analysisViewsEnabled: false
   property var pendingCommandLines: []
+  property var pendingToneSelectionSyncFlags: []
+  property bool activeToneSyncsReferenceSelection: true
   property string lastProtocolType: ""
   property string lastProtocolLine: ""
   property string lastStderrLine: ""
@@ -230,6 +232,9 @@ BarWidget {
   readonly property string activeToneNoteLabel: displayNoteLabel(activeToneNote)
   readonly property string selectedReferenceSceneLabel: formatReferenceSceneLabel(selectedReferenceNoteLabel, selectedReferenceIntervalsSemitones)
   readonly property string selectedReferencePlaybackLabel: formatReferencePlaybackLabel(selectedReferenceSceneLabel, selectedReferenceSceneId)
+  readonly property bool activeToneIsSingleNote: toneActive
+    && activeToneIntervalsSemitones.length === 0
+    && normalizeSelectedReferenceSceneId(activeToneSceneId) === defaultReferenceSceneId
   readonly property bool activeToneHasIntervals: activeToneIntervalsSemitones.length > 0
   readonly property string activeToneSceneKind: {
     if (!toneActive) return ""
@@ -3004,6 +3009,11 @@ BarWidget {
     activeToneSceneId = defaultReferenceSceneId
     activeToneIntervalsSemitones = []
     activeToneVoices = []
+    activeToneSyncsReferenceSelection = true
+  }
+
+  function clearPendingToneSelectionSyncFlags() {
+    pendingToneSelectionSyncFlags = []
   }
 
   function clearMetronomeState() {
@@ -3068,6 +3078,7 @@ BarWidget {
       runtimeErrorCode = recoveryReason === "helper_exit" ? "" : recoveryReason
       runtimeErrorMessage = recoveryReason === "helper_exit" ? "" : helperError
       pendingCommandLines = []
+      clearPendingToneSelectionSyncFlags()
       clearPitchState()
       clearToneState()
       clearMetronomeState()
@@ -3148,6 +3159,7 @@ BarWidget {
     restartPending = false
     if (!preserveRecoveryState) {
       pendingCommandLines = []
+      clearPendingToneSelectionSyncFlags()
       clearRecoveryState()
     }
     ensureHelperRunning()
@@ -3163,6 +3175,7 @@ BarWidget {
     helperErrorCode = ""
     helperError = ""
     pendingCommandLines = []
+    clearPendingToneSelectionSyncFlags()
     lastExitCode = 0
     clearRecoveryState()
     resetLiveState()
@@ -3180,6 +3193,7 @@ BarWidget {
     helperErrorCode = ""
     helperError = ""
     pendingCommandLines = []
+    clearPendingToneSelectionSyncFlags()
     lastExitCode = 0
     clearRecoveryState()
     resetLiveState()
@@ -3247,6 +3261,11 @@ BarWidget {
     ensureHelperRunning()
   }
 
+  function queuePlayToneCommand(commandObject, syncReferenceSelection) {
+    pendingToneSelectionSyncFlags = pendingToneSelectionSyncFlags.concat([syncReferenceSelection === true])
+    queueHelperCommand(commandObject)
+  }
+
   function playSelectedTone() {
     var command = {
       type: "play_tone",
@@ -3259,7 +3278,18 @@ BarWidget {
     if (selectedReferenceIntervalsSemitones.length > 0)
       command.intervals_semitones = selectedReferenceIntervalsSemitones.slice(0)
 
-    queueHelperCommand(command)
+    queuePlayToneCommand(command, true)
+  }
+
+  function playTuneNoteString(noteText) {
+    var midiNumber = parseNoteMidiNumber(noteText)
+    if (midiNumber === null) return false
+
+    queuePlayToneCommand({
+      type: "play_tone",
+      note: formatMidiNote(midiNumber, "sharps"),
+    }, false)
+    return true
   }
 
   function startMetronome() {
@@ -3291,16 +3321,6 @@ BarWidget {
     }
   }
 
-  function playReferenceNoteString(noteText) {
-    var midiNumber = parseNoteMidiNumber(noteText)
-    if (midiNumber === null) return
-
-    setSelectedReferenceMidiNumber(midiNumber)
-    rememberCurrentQuickSwitch()
-    persistWidgetSettings()
-    playSelectedTone()
-  }
-
   function presetNoteAt(index) {
     var numeric = Math.round(finiteNumber(index, -1))
     if (numeric < 0 || numeric >= selectedPresetNotes.length) return ""
@@ -3311,19 +3331,20 @@ BarWidget {
     var noteText = presetNoteAt(index)
     if (noteText === "") return false
 
-    playReferenceNoteString(noteText)
-    return true
+    return playTuneNoteString(noteText)
   }
 
   function stopTone() {
     if (!helperProc.running && !helperProcessStarted) {
       pendingCommandLines = []
+      clearPendingToneSelectionSyncFlags()
       clearToneState()
       return
     }
 
     if (!helperProcessStarted) {
       pendingCommandLines = []
+      clearPendingToneSelectionSyncFlags()
       clearToneState()
       return
     }
@@ -3377,6 +3398,7 @@ BarWidget {
     runtimeErrorCode = code
     runtimeErrorMessage = messageText
 
+    if (isOutputErrorCode(code)) clearPendingToneSelectionSyncFlags()
     if (isOutputErrorCode(code)) clearToneState()
     if (isOutputErrorCode(code)) clearMetronomeState()
     if (isInputErrorCode(code)) clearPitchState()
@@ -3398,6 +3420,7 @@ BarWidget {
       helperReadySeen = false
       helperProcessStarted = false
       pendingCommandLines = []
+      clearPendingToneSelectionSyncFlags()
       clearRecoveryState()
       if (helperProc.running) helperProc.running = false
       return
@@ -3429,21 +3452,30 @@ BarWidget {
     }
 
     if (message.type === "tone_started") {
+      var syncReferenceSelection = activeToneSyncsReferenceSelection
+      if (pendingToneSelectionSyncFlags.length > 0) {
+        syncReferenceSelection = pendingToneSelectionSyncFlags[0] === true
+        pendingToneSelectionSyncFlags = pendingToneSelectionSyncFlags.slice(1)
+      }
+
       helperState = "active"
       helperReadySeen = true
+      activeToneSyncsReferenceSelection = syncReferenceSelection
       activeToneNote = String(message.note || selectedReferenceCommandNoteLabel)
       activeToneFrequencyHz = Math.max(0, finiteNumber(message.frequency_hz, 0))
       activeToneSceneId = normalizeSelectedReferenceSceneId(message.scene_id)
       activeToneIntervalsSemitones = normalizeProtocolIntervalArray(message.intervals_semitones)
       activeToneVoices = normalizeToneVoices(message.voices, activeToneNote, activeToneFrequencyHz)
-      applySelectedReferenceFromNote(activeToneNote)
-      referencePlaybackMode = playbackModeForIntervals(activeToneIntervalsSemitones)
-      selectedReferenceSceneId = activeToneSceneId
-      if (referencePlaybackMode === "drone")
-        selectedReferenceIntervalSemitones = normalizeSelectedReferenceIntervalSemitones(activeToneIntervalsSemitones[0])
-      else if (referencePlaybackMode === "chord") {
-        var selectedChordPreset = chordPresetByIntervals(activeToneIntervalsSemitones)
-        if (selectedChordPreset) selectedReferenceChordId = normalizeSelectedReferenceChordId(selectedChordPreset.id)
+      if (activeToneSyncsReferenceSelection) {
+        applySelectedReferenceFromNote(activeToneNote)
+        referencePlaybackMode = playbackModeForIntervals(activeToneIntervalsSemitones)
+        selectedReferenceSceneId = activeToneSceneId
+        if (referencePlaybackMode === "drone")
+          selectedReferenceIntervalSemitones = normalizeSelectedReferenceIntervalSemitones(activeToneIntervalsSemitones[0])
+        else if (referencePlaybackMode === "chord") {
+          var selectedChordPreset = chordPresetByIntervals(activeToneIntervalsSemitones)
+          if (selectedChordPreset) selectedReferenceChordId = normalizeSelectedReferenceChordId(selectedChordPreset.id)
+        }
       }
       if (isOutputErrorCode(runtimeErrorCode)) clearRuntimeError()
       return
@@ -3527,6 +3559,7 @@ BarWidget {
     helperReadySeen = false
     helperProcessStarted = false
     pendingCommandLines = []
+    clearPendingToneSelectionSyncFlags()
     clearRecoveryState()
     if (helperProc.running) helperProc.running = false
   }
@@ -3565,6 +3598,7 @@ BarWidget {
 
     lastExitCode = Number(exitCode)
     pendingCommandLines = []
+    clearPendingToneSelectionSyncFlags()
     clearPitchState()
     clearToneState()
     if (scheduleHelperRecovery("helper_exit", helperExitMessage(exitCode))) return

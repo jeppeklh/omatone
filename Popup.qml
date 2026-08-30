@@ -28,7 +28,7 @@ FocusScope {
   readonly property int referenceGridColumns: verticalBar ? 3 : 4
   readonly property var popupDestinations: [
     { value: "tune", label: "Tune" },
-    { value: "reference", label: "Reference" },
+    { value: "reference", label: "Tone" },
     { value: "metronome", label: "Metronome" },
     { value: "presets", label: "Presets" },
     { value: "advanced", label: "Advanced" },
@@ -36,6 +36,7 @@ FocusScope {
 
   function normalizeDestination(value) {
     var next = String(value || "").toLowerCase()
+    if (next === "tone") return "reference"
     if (next === "reference") return next
     if (next === "metronome") return next
     if (next === "presets") return next
@@ -635,14 +636,17 @@ FocusScope {
 
                   width: (quickNoteGrid.width - quickNoteGrid.columnSpacing * Math.max(0, quickNoteGrid.columns - 1)) / Math.max(1, quickNoteGrid.columns)
                   text: root.hostWidget ? ((index + 1) + "  " + root.hostWidget.presetTargetDisplayLabel(modelData)) : String(modelData)
-                  selected: root.hostWidget ? root.hostWidget.sameNoteText(root.hostWidget.selectedReferenceCommandNoteLabel, String(modelData.note || "")) : false
+                  selected: root.hostWidget
+                    ? (root.hostWidget.activeToneIsSingleNote
+                      && root.hostWidget.sameNoteText(root.hostWidget.activeToneNote, String(modelData.note || "")))
+                    : false
                   bordered: true
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   verticalPadding: Style.space(8)
                   focusable: true
-                  onClicked: if (root.hostWidget) root.hostWidget.playReferenceNoteString(String(modelData.note || ""))
+                  onClicked: if (root.hostWidget) root.hostWidget.playTuneNoteString(String(modelData.note || ""))
                 }
               }
             }
@@ -1174,7 +1178,7 @@ FocusScope {
               Text {
                 width: Math.max(0, parent.width - playToneButton.implicitWidth - parent.spacing)
                 textFormat: Text.PlainText
-                text: "Reference tone"
+                text: "Tone"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body

@@ -72,14 +72,14 @@ subdivisions, and a beat-one accent.
     reference-tone targeting
 -   Built-in equal, pythagorean, and meantone temperament choices with
     A-anchored offset handling
--   Stable-width bar feedback with compact state labels and concise hover
-    summaries
--   Popup destinations for `Tune`, `Reference`, `Metronome`, `Presets`,
+-   Stable-width icon-only bar feedback with bounded activity markers and
+    concise hover summaries
+-   Popup destinations for `Tune`, `Tone`, `Metronome`, `Presets`,
     and `Advanced`
 -   Shell IPC control for live preset, reference, and metronome actions
 -   Optional MIDI note input for retuning the live reference selection
--   Default `Tune` workflow with immediate `E A D G B E` access and no
-    required scrolling
+-   Default `Tune` workflow with immediate `E A D G B E` access, strict
+    single-note playback, and no required scrolling
 -   Persisted reference note, metronome tempo/meter/subdivision, tuning
     preset, and sharp/flat spelling preference
 -   Persisted quick-switch favorites and recents for workflow snapshots
