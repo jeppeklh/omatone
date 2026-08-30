@@ -1,5 +1,6 @@
 use omatune::note::{Note, Temperament, DEFAULT_REFERENCE_A_HZ};
 use omatune::protocol::UiMessage;
+use omatune::reference_tone::ReferenceToneSceneId;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
@@ -394,6 +395,120 @@ fn chord_playback_reports_root_and_all_generated_voices() {
 }
 
 #[test]
+fn pedal_scene_respects_temperament_and_reports_support_voices() {
+    let temperament = Temperament::from_offset_slice(&[
+        0.0, 8.0, 0.0, 0.0, -6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    ])
+    .unwrap();
+    let a4 = "A4".parse::<Note>().unwrap();
+    let a3 = "A3".parse::<Note>().unwrap();
+    let c_sharp5 = "C#5".parse::<Note>().unwrap();
+    let e5 = "E5".parse::<Note>().unwrap();
+    let expected_tone = UiMessage::ToneStarted {
+        note: a4,
+        frequency_hz: temperament
+            .frequency_hz_for_note(a4, DEFAULT_REFERENCE_A_HZ)
+            .unwrap(),
+        scene_id: ReferenceToneSceneId::Pedal,
+        intervals_semitones: vec![4, 7],
+        voices: vec![
+            omatune::protocol::ToneVoice {
+                note: a4,
+                frequency_hz: temperament
+                    .frequency_hz_for_note(a4, DEFAULT_REFERENCE_A_HZ)
+                    .unwrap(),
+            },
+            omatune::protocol::ToneVoice {
+                note: a3,
+                frequency_hz: temperament
+                    .frequency_hz_for_note(a3, DEFAULT_REFERENCE_A_HZ)
+                    .unwrap(),
+            },
+            omatune::protocol::ToneVoice {
+                note: c_sharp5,
+                frequency_hz: temperament
+                    .frequency_hz_for_note(c_sharp5, DEFAULT_REFERENCE_A_HZ)
+                    .unwrap(),
+            },
+            omatune::protocol::ToneVoice {
+                note: e5,
+                frequency_hz: temperament
+                    .frequency_hz_for_note(e5, DEFAULT_REFERENCE_A_HZ)
+                    .unwrap(),
+            },
+        ],
+    }
+    .to_json_line()
+    .unwrap();
+
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"scene_id\":\"pedal\",\"intervals_semitones\":[4,7]}\n",
+        Some("idle"),
+        Some("ok"),
+        &["--temperament-offsets-cents", "0,8,0,0,-6,0,0,0,0,0,0,0"],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(lines, vec![r#"{"type":"ready"}"#.to_owned(), expected_tone]);
+}
+
+#[test]
+fn single_note_pedal_scene_reports_scene_id_and_support_voice() {
+    let a4 = "A4".parse::<Note>().unwrap();
+    let a3 = "A3".parse::<Note>().unwrap();
+    let expected_tone = UiMessage::ToneStarted {
+        note: a4,
+        frequency_hz: a4.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+        scene_id: ReferenceToneSceneId::Pedal,
+        intervals_semitones: Vec::new(),
+        voices: vec![
+            omatune::protocol::ToneVoice {
+                note: a4,
+                frequency_hz: a4.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+            },
+            omatune::protocol::ToneVoice {
+                note: a3,
+                frequency_hz: a3.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+            },
+        ],
+    }
+    .to_json_line()
+    .unwrap();
+
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"scene_id\":\"pedal\"}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(lines, vec![r#"{"type":"ready"}"#.to_owned(), expected_tone]);
+}
+
+#[test]
+fn pedal_scene_supports_the_maximum_voice_count() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"scene_id\":\"pedal\",\"intervals_semitones\":[3,7,12]}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"scene_id":"pedal","intervals_semitones":[3,7,12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A3","frequency_hz":220.0},{"note":"C5","frequency_hz":523.2511306011972},{"note":"E5","frequency_hz":659.2551138257398},{"note":"A5","frequency_hz":880.0}]}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
 fn runtime_output_failure_is_reported_without_crashing_helper() {
     let output = run_helper_with_input(
         "{\"type\":\"play_tone\",\"note\":\"A4\"}\n",
@@ -589,6 +704,67 @@ fn runtime_transposition_update_relabels_active_interval_scene_without_changing_
 }
 
 #[test]
+fn invalid_runtime_transposition_does_not_commit_or_drop_an_active_pedal_scene() {
+    let c1 = "C1".parse::<Note>().unwrap();
+    let c0 = "C0".parse::<Note>().unwrap();
+    let initial_tone = UiMessage::ToneStarted {
+        note: c1,
+        frequency_hz: c1.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+        scene_id: ReferenceToneSceneId::Pedal,
+        intervals_semitones: Vec::new(),
+        voices: vec![
+            omatune::protocol::ToneVoice {
+                note: c1,
+                frequency_hz: c1.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+            },
+            omatune::protocol::ToneVoice {
+                note: c0,
+                frequency_hz: c0.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+            },
+        ],
+    }
+    .to_json_line()
+    .unwrap();
+    let calibrated_tone = UiMessage::ToneStarted {
+        note: c1,
+        frequency_hz: c1.frequency_hz(442.0).unwrap(),
+        scene_id: ReferenceToneSceneId::Pedal,
+        intervals_semitones: Vec::new(),
+        voices: vec![
+            omatune::protocol::ToneVoice {
+                note: c1,
+                frequency_hz: c1.frequency_hz(442.0).unwrap(),
+            },
+            omatune::protocol::ToneVoice {
+                note: c0,
+                frequency_hz: c0.frequency_hz(442.0).unwrap(),
+            },
+        ],
+    }
+    .to_json_line()
+    .unwrap();
+
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"C1\",\"scene_id\":\"pedal\"}\n{\"type\":\"set_transposition\",\"semitones\":-12}\n{\"type\":\"set_reference_a\",\"frequency_hz\":442.0}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            initial_tone,
+            r#"{"type":"error","code":"invalid_transposition","message":"note C0 is outside the supported sounding range for transposition -12 semitones"}"#.to_owned(),
+            calibrated_tone,
+        ]
+    );
+}
+
+#[test]
 fn startup_temperament_argument_calibrates_initial_pitch_and_tone() {
     let temperament = Temperament::from_offset_slice(&[
         10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
@@ -609,6 +785,7 @@ fn startup_temperament_argument_calibrates_initial_pitch_and_tone() {
     let expected_tone = UiMessage::ToneStarted {
         note: c4,
         frequency_hz: c4_frequency_hz,
+        scene_id: ReferenceToneSceneId::Blend,
         intervals_semitones: Vec::new(),
         voices: Vec::new(),
     }
@@ -659,6 +836,7 @@ fn runtime_temperament_update_restarts_active_tone_with_tempered_frequency() {
             UiMessage::ToneStarted {
                 note: c4,
                 frequency_hz: equal_c4_frequency_hz,
+                scene_id: ReferenceToneSceneId::Blend,
                 intervals_semitones: Vec::new(),
                 voices: Vec::new(),
             }
@@ -667,6 +845,7 @@ fn runtime_temperament_update_restarts_active_tone_with_tempered_frequency() {
             UiMessage::ToneStarted {
                 note: c4,
                 frequency_hz: tempered_c4_frequency_hz,
+                scene_id: ReferenceToneSceneId::Blend,
                 intervals_semitones: Vec::new(),
                 voices: Vec::new(),
             }

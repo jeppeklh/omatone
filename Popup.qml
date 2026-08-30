@@ -31,8 +31,8 @@ FocusScope {
   readonly property string keyboardHintText: root.hostWidget ? root.hostWidget.keyboardShortcutSummary : ""
   readonly property string quickTuneHintText: {
     if (!root.hostWidget) return ""
-    if (root.hostWidget.referencePlaybackMode === "drone") return "Quick notes use the current drone interval."
-    if (root.hostWidget.referencePlaybackMode === "chord") return "Quick notes use the current chord shape."
+    if (root.hostWidget.referencePlaybackMode === "drone") return "Quick notes use the current drone scene."
+    if (root.hostWidget.referencePlaybackMode === "chord") return "Quick notes use the current chord scene."
     return ""
   }
   readonly property var popupDestinations: [
@@ -1142,6 +1142,18 @@ FocusScope {
               }
             }
 
+            ButtonGroup {
+              width: parent.width
+              options: root.hostWidget ? root.hostWidget.referenceScenePresets : []
+              value: root.hostWidget ? root.hostWidget.selectedReferenceSceneId : "blend"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              onChanged: function(value) {
+                if (root.hostWidget) root.hostWidget.setSelectedReferenceSceneId(value)
+              }
+            }
+
             Flow {
               width: parent.width
               visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "drone" : false
@@ -1297,10 +1309,10 @@ FocusScope {
                 id: playToneButton
                 text: root.hostWidget
                   ? (root.hostWidget.selectedReferenceToneActive
-                    ? ("Stop " + root.hostWidget.selectedReferenceSceneLabel)
+                    ? ("Stop " + root.hostWidget.selectedReferencePlaybackLabel)
                     : (root.hostWidget.toneActive
-                      ? ("Retune to " + root.hostWidget.selectedReferenceSceneLabel)
-                      : ("Play " + root.hostWidget.selectedReferenceSceneLabel)))
+                      ? ("Retune to " + root.hostWidget.selectedReferencePlaybackLabel)
+                      : ("Play " + root.hostWidget.selectedReferencePlaybackLabel)))
                   : "Play"
                 selected: root.hostWidget ? root.hostWidget.selectedReferenceToneActive : false
                 bordered: true

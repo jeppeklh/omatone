@@ -1,5 +1,5 @@
 use crate::note::Note;
-use crate::reference_tone::{ReferenceToneGenerator, ToneGeneratorError};
+use crate::reference_tone::{ReferenceToneGenerator, ReferenceToneVoice, ToneGeneratorError};
 use std::f64::consts::TAU;
 
 pub struct SharedAudioMixer {
@@ -31,6 +31,13 @@ impl SharedAudioMixer {
         notes: &[(Note, f64)],
     ) -> Result<(), ToneGeneratorError> {
         self.reference_tone.play_notes(notes)
+    }
+
+    pub(crate) fn play_reference_voices(
+        &mut self,
+        voices: &[ReferenceToneVoice],
+    ) -> Result<(), ToneGeneratorError> {
+        self.reference_tone.play_voices(voices)
     }
 
     pub fn stop_reference_notes(&mut self) {

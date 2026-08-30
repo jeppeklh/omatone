@@ -4,7 +4,7 @@ use crate::metronome::{
     DEFAULT_METRONOME_BEAT_UNIT, DEFAULT_METRONOME_SUBDIVISION,
 };
 use crate::note::{validate_transposition_semitones, Note, Temperament};
-use crate::reference_tone::ReferenceToneScene;
+use crate::reference_tone::{ReferenceToneScene, ReferenceToneSceneId};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fmt;
@@ -60,6 +60,8 @@ pub enum UiMessage {
     ToneStarted {
         note: Note,
         frequency_hz: f64,
+        #[serde(skip_serializing_if = "ReferenceToneSceneId::is_default")]
+        scene_id: ReferenceToneSceneId,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         intervals_semitones: Vec<i32>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -196,11 +198,29 @@ fn parse_play_tone(object: &Map<String, Value>) -> Result<Command, CommandParseE
     let note = note_text
         .parse::<Note>()
         .map_err(|error| CommandParseError::InvalidNote(error.to_string()))?;
+    let scene_id = parse_scene_id(object)?;
     let intervals_semitones = parse_intervals_semitones(object)?;
-    let scene = ReferenceToneScene::new(note, intervals_semitones)
+    let scene = ReferenceToneScene::with_scene_id(note, intervals_semitones, scene_id)
         .map_err(|error| CommandParseError::InvalidCommand(error.to_string()))?;
 
     Ok(Command::PlayTone { scene })
+}
+
+fn parse_scene_id(object: &Map<String, Value>) -> Result<ReferenceToneSceneId, CommandParseError> {
+    let Some(scene_value) = object.get("scene_id") else {
+        return Ok(ReferenceToneSceneId::default());
+    };
+
+    let scene_id = scene_value.as_str().ok_or_else(|| {
+        CommandParseError::InvalidCommand("play_tone field 'scene_id' must be a string".to_owned())
+    })?;
+
+    ReferenceToneSceneId::parse(scene_id).ok_or_else(|| {
+        CommandParseError::InvalidCommand(format!(
+            "play_tone field 'scene_id' must be one of: {}",
+            ReferenceToneSceneId::supported_ids().join(", ")
+        ))
+    })
 }
 
 fn parse_intervals_semitones(object: &Map<String, Value>) -> Result<Vec<i32>, CommandParseError> {
@@ -381,7 +401,7 @@ mod tests {
         MetronomeState, DEFAULT_METRONOME_BEATS_PER_BAR, DEFAULT_METRONOME_BEAT_UNIT,
     };
     use crate::note::Temperament;
-    use crate::reference_tone::ReferenceToneScene;
+    use crate::reference_tone::{ReferenceToneScene, ReferenceToneSceneId};
 
     #[test]
     fn parses_play_tone_and_canonicalizes_input_note() {
@@ -403,6 +423,26 @@ mod tests {
             command,
             Command::PlayTone {
                 scene: ReferenceToneScene::new("A4".parse().unwrap(), vec![7, 12]).unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_play_tone_with_named_scene() {
+        let command = parse_command(
+            r#"{"type":"play_tone","note":"A4","scene_id":"pedal","intervals_semitones":[4,7]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            command,
+            Command::PlayTone {
+                scene: ReferenceToneScene::with_scene_id(
+                    "A4".parse().unwrap(),
+                    vec![4, 7],
+                    ReferenceToneSceneId::Pedal,
+                )
+                .unwrap(),
             }
         );
     }
@@ -507,6 +547,18 @@ mod tests {
             )
         );
         assert_eq!(
+            parse_command(r#"{"type":"play_tone","note":"A4","scene_id":4}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "play_tone field 'scene_id' must be a string".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"play_tone","note":"A4","scene_id":"wide"}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "play_tone field 'scene_id' must be one of: blend, pedal".to_owned()
+            )
+        );
+        assert_eq!(
             parse_command(r#"{"type":"play_tone","note":"B8","intervals_semitones":[1]}"#)
                 .unwrap_err(),
             CommandParseError::InvalidCommand(
@@ -606,6 +658,7 @@ mod tests {
             UiMessage::ToneStarted {
                 note: "A#3".parse().unwrap(),
                 frequency_hz: 233.08188,
+                scene_id: ReferenceToneSceneId::Blend,
                 intervals_semitones: Vec::new(),
                 voices: Vec::new(),
             }
@@ -617,6 +670,7 @@ mod tests {
             UiMessage::ToneStarted {
                 note: "A4".parse().unwrap(),
                 frequency_hz: 440.0,
+                scene_id: ReferenceToneSceneId::Blend,
                 intervals_semitones: vec![12],
                 voices: vec![
                     ToneVoice {
@@ -632,6 +686,35 @@ mod tests {
             .to_json_line()
             .unwrap(),
             r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}"#
+        );
+        assert_eq!(
+            UiMessage::ToneStarted {
+                note: "A4".parse().unwrap(),
+                frequency_hz: 440.0,
+                scene_id: ReferenceToneSceneId::Pedal,
+                intervals_semitones: vec![4, 7],
+                voices: vec![
+                    ToneVoice {
+                        note: "A4".parse().unwrap(),
+                        frequency_hz: 440.0,
+                    },
+                    ToneVoice {
+                        note: "A3".parse().unwrap(),
+                        frequency_hz: 220.0,
+                    },
+                    ToneVoice {
+                        note: "C#5".parse().unwrap(),
+                        frequency_hz: 554.3652619537442,
+                    },
+                    ToneVoice {
+                        note: "E5".parse().unwrap(),
+                        frequency_hz: 659.2551138257398,
+                    },
+                ],
+            }
+            .to_json_line()
+            .unwrap(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"scene_id":"pedal","intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A3","frequency_hz":220.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}"#
         );
         assert_eq!(
             UiMessage::MetronomeStarted {

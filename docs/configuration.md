@@ -3,7 +3,7 @@
 ## Purpose
 
 This document defines the persisted user-facing configuration introduced
-in Phase 1.
+in Phase 1 and extended in Phase 2.
 
 It covers:
 
@@ -25,13 +25,17 @@ For a bar widget instance, the entry shape is:
 ```json
 {
   "id": "jeppeklh.omatune",
-  "configVersion": 2,
+  "configVersion": 3,
   "referenceAHz": 440.0,
   "transpositionSemitones": 0,
   "noteSpelling": "sharps",
   "selectedPresetId": "guitar.standard",
   "selectedTemperamentId": "equal.12tet",
   "selectedReferenceNote": "A4",
+  "referencePlaybackMode": "single",
+  "referenceSceneId": "blend",
+  "referenceIntervalSemitones": 7,
+  "referenceChordId": "major",
   "metronomeBpm": 100,
   "metronomeBeatsPerBar": 4,
   "metronomeBeatUnit": 4,
@@ -51,7 +55,7 @@ settings file.
 
 ## Supported Fields
 
--   `configVersion`: integer schema version. Current value: `2`.
+-   `configVersion`: integer schema version. Current value: `3`.
 -   `referenceAHz`: reference A frequency in Hz.
 -   `transpositionSemitones`: integer semitone offset from sounding pitch
     to displayed/selected note names.
@@ -59,6 +63,10 @@ settings file.
 -   `selectedPresetId`: currently selected tuning preset identifier.
 -   `selectedTemperamentId`: currently selected temperament identifier.
 -   `selectedReferenceNote`: last selected chromatic reference note.
+-   `referencePlaybackMode`: last selected reference playback mode.
+-   `referenceSceneId`: last selected bounded reference scene preset.
+-   `referenceIntervalSemitones`: last selected drone interval preset.
+-   `referenceChordId`: last selected chord preset.
 -   `metronomeBpm`: last selected whole-number metronome tempo.
 -   `metronomeBeatsPerBar`: last selected metronome meter numerator.
 -   `metronomeBeatUnit`: last selected metronome meter denominator.
@@ -113,13 +121,17 @@ Pack import and export are separate from the configuration editor.
 
 When no persisted configuration exists, Omatune uses:
 
--   `configVersion = 2`
+-   `configVersion = 3`
 -   `referenceAHz = 440.0`
 -   `transpositionSemitones = 0`
 -   `noteSpelling = "sharps"`
 -   `selectedPresetId = "guitar.standard"`
 -   `selectedTemperamentId = "equal.12tet"`
 -   `selectedReferenceNote = "A4"`
+-   `referencePlaybackMode = "single"`
+-   `referenceSceneId = "blend"`
+-   `referenceIntervalSemitones = 7`
+-   `referenceChordId = "major"`
 -   `metronomeBpm = 100`
 -   `metronomeBeatsPerBar = 4`
 -   `metronomeBeatUnit = 4`
@@ -156,6 +168,19 @@ back to the built-in default `equal.12tet`.
 `selectedReferenceNote` must parse as a supported chromatic note in the
 range `C0` through `B8` after canonicalization.
 
+`referencePlaybackMode` must be `single`, `drone`, or `chord`.
+
+`referenceSceneId` must resolve to one of the built-in bounded reference
+scene presets:
+
+-   `blend`
+-   `pedal`
+
+`referenceIntervalSemitones` must resolve to one of the built-in drone
+interval presets.
+
+`referenceChordId` must resolve to one of the built-in chord presets.
+
 `metronomeBpm` must be an integer within `20..=300`.
 
 `metronomeBeatsPerBar` and `metronomeBeatUnit` must resolve to one of
@@ -184,6 +209,7 @@ Each workflow snapshot stores:
 -   `referenceNote`
 -   `transpositionSemitones`
 -   `playbackMode`
+-   `sceneId`
 -   `intervalSemitones`
 -   `chordId`
 -   `metronomeBpm`
@@ -194,6 +220,7 @@ Each workflow snapshot stores:
 Within those snapshots:
 
 -   `playbackMode` must be `single`, `drone`, or `chord`.
+-   `sceneId` must resolve to one of the built-in bounded reference scene presets.
 -   `transpositionSemitones` uses the same `-12..=12` integer validation
     rule as the top-level field.
 -   `intervalSemitones` must resolve to one of the built-in drone
@@ -205,6 +232,11 @@ Within those snapshots:
 Those snapshot fields are validated with the rules above plus the
 snapshot-specific playback-mode, interval, and chord constraints here.
 Invalid fields fall back to the documented defaults for that field.
+If a stored reference-note scene would push an upper interval or chord
+voice outside the supported displayed note range, Omatune nudges the
+reference root to the nearest valid displayed note. If only the extra
+`pedal` support octave would overflow the displayed range, Omatune falls
+back to `blend` for that stored scene.
 Duplicate snapshots are removed after normalization, preserving the
 earliest surviving entry.
 
@@ -237,6 +269,17 @@ helper-owned temperament model:
 -   helper runtime, via the additive `set_temperament` protocol command,
     so live temperament changes retune pitch interpretation and any
     active reference tone together.
+
+The persisted reference scene fields stay QML-owned until reference
+playback is requested:
+
+-   `selectedReferenceNote`, `referencePlaybackMode`,
+    `referenceSceneId`, `referenceIntervalSemitones`, and
+    `referenceChordId` are normalized locally and used to build the next
+    `play_tone` command;
+-   the helper remains the single source of truth for the sounding note
+    frequencies, actual rendered support voices, and any active
+    temperament or calibration offsets.
 
 Preset selection, saved quick-switch workflow snapshots, note-spelling
 preference, metronome BPM, meter, subdivision, and display

@@ -118,6 +118,7 @@ fn handle_command(
             Ok(active_tone) => protocol_writer.write_message(&UiMessage::ToneStarted {
                 note: active_tone.note,
                 frequency_hz: active_tone.frequency_hz,
+                scene_id: active_tone.scene_id,
                 intervals_semitones: active_tone.intervals_semitones,
                 voices: active_tone.voices,
             })?,
@@ -139,6 +140,7 @@ fn handle_command(
                     protocol_writer.write_message(&UiMessage::ToneStarted {
                         note: active_tone.note,
                         frequency_hz: active_tone.frequency_hz,
+                        scene_id: active_tone.scene_id,
                         intervals_semitones: active_tone.intervals_semitones,
                         voices: active_tone.voices,
                     })?
@@ -148,6 +150,21 @@ fn handle_command(
             }
         }
         Command::SetTransposition { semitones } => {
+            let current_tuning_model = shared_config.tuning_model();
+            let preview_tuning_model = omatune::note::TuningModel::with_temperament(
+                current_tuning_model.reference_a_hz(),
+                semitones,
+                current_tuning_model.temperament(),
+            )
+            .expect("validated transposition command should produce a valid tuning model");
+            let preview_active_tone = match audio_output.preview_tuning(preview_tuning_model) {
+                Ok(active_tone) => active_tone,
+                Err(error) => {
+                    emit_control_error(protocol_writer, error)?;
+                    return Ok(());
+                }
+            };
+
             shared_config
                 .set_transposition_semitones(semitones)
                 .map_err(|error| {
@@ -158,17 +175,14 @@ fn handle_command(
                     )
                 })?;
 
-            match audio_output.refresh_tuning() {
-                Ok(Some(active_tone)) => {
-                    protocol_writer.write_message(&UiMessage::ToneStarted {
-                        note: active_tone.note,
-                        frequency_hz: active_tone.frequency_hz,
-                        intervals_semitones: active_tone.intervals_semitones,
-                        voices: active_tone.voices,
-                    })?
-                }
-                Ok(None) => {}
-                Err(error) => emit_control_error(protocol_writer, error)?,
+            if let Some(active_tone) = preview_active_tone {
+                protocol_writer.write_message(&UiMessage::ToneStarted {
+                    note: active_tone.note,
+                    frequency_hz: active_tone.frequency_hz,
+                    scene_id: active_tone.scene_id,
+                    intervals_semitones: active_tone.intervals_semitones,
+                    voices: active_tone.voices,
+                })?
             }
         }
         Command::SetTemperament { temperament } => {
@@ -179,6 +193,7 @@ fn handle_command(
                     protocol_writer.write_message(&UiMessage::ToneStarted {
                         note: active_tone.note,
                         frequency_hz: active_tone.frequency_hz,
+                        scene_id: active_tone.scene_id,
                         intervals_semitones: active_tone.intervals_semitones,
                         voices: active_tone.voices,
                     })?

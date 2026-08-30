@@ -140,19 +140,42 @@ remains in use, with additive fields:
       ]
     }
 
+Phase 2 richer reference scenes keep that same shape and add an optional
+bounded `scene_id` when the active scene is not the default `blend`
+rendering:
+
+    {
+      "type": "tone_started",
+      "note": "A4",
+      "frequency_hz": 440.0,
+      "scene_id": "pedal",
+      "intervals_semitones": [4, 7],
+      "voices": [
+        { "note": "A4", "frequency_hz": 440.0 },
+        { "note": "A3", "frequency_hz": 220.0 },
+        { "note": "C#5", "frequency_hz": 554.3652619537442 },
+        { "note": "E5", "frequency_hz": 659.2551138257398 }
+      ]
+    }
+
 Rules:
 
 -   `note` and `frequency_hz` remain the root voice of the active
     playback scene, with `note` expressed after the active transposition
     is applied and `frequency_hz` remaining the actual generated
     sounding frequency;
+-   `scene_id`, when present, identifies one bounded richer rendering
+    preset; the current helper accepts `blend` and `pedal`;
 -   `intervals_semitones`, when present, echoes the extra interval notes
     above the root;
 -   `voices`, when present, lists every note actually being generated in
     root-first order with note labels in the current transposition space
-    and authoritative sounding frequencies;
+    and authoritative sounding frequencies; richer scenes may include a
+    bounded support doubling such as a lower root octave that is not
+    represented as another positive interval above the root;
 -   single-note playback may omit `intervals_semitones` and `voices` to
-    preserve the compact v0.1 message shape.
+    preserve the compact v0.1 message shape when the default `blend`
+    scene is active.
 
 Phase 5C simple chord presets still use this same representation. For
 example, `A4` major is rooted at `A4` with
@@ -288,6 +311,15 @@ the selected note:
       "intervals_semitones": [12]
     }
 
+Phase 2 richer reference scenes also add an optional bounded `scene_id`:
+
+    {
+      "type": "play_tone",
+      "note": "A4",
+      "scene_id": "pedal",
+      "intervals_semitones": [4, 7]
+    }
+
 The helper calculates the frequency using the current reference A value.
 
 When transposition is non-zero, the incoming `note` is interpreted in
@@ -304,10 +336,15 @@ For v0.1, the supported note range is `C0` through `B8`, inclusive.
 For Phase 5B/5C bounded multi-note playback:
 
 -   `intervals_semitones` is optional;
+-   `scene_id` is optional;
+-   when present, `scene_id` must be one of the documented built-in
+    scene ids: `blend` or `pedal`;
 -   when present, it must be an array of integers;
 -   each interval must be within `1..=24` semitones above the root;
 -   the helper currently accepts at most three interval entries, for a
-    maximum of four simultaneously generated notes including the root;
+    maximum of four target notes including the root; richer scenes such
+    as `pedal` may add one bounded support voice, for a maximum of five
+    simultaneously generated voices;
 -   duplicate interval entries are rejected;
 -   every derived note must still remain inside the supported `C0`
     through `B8` range.
@@ -353,6 +390,15 @@ workflows:
 -   `chord`: the selected note remains the root and one fixed preset
     shape such as major, minor, `sus2`, or `sus4` provides the upper
     voices.
+
+Phase 2 keeps the same target-note model and adds one bounded richer
+scene selector:
+
+-   `blend`: the default scene, with gentle root weighting and a mild
+    harmonic mix so multi-note references stay clear without becoming a
+    general synth surface;
+-   `pedal`: adds a quiet lower root octave when supported by the note
+    range, keeping the same target intervals and temperament math.
 
 ### Stop Tone
 
@@ -404,6 +450,11 @@ When accepted:
     consistent and emits a fresh `tone_started` confirmation with the new
     note labels.
 
+If the requested transposition would make an already active richer scene
+impossible to represent in the supported displayed note range, the
+helper rejects `set_transposition` and leaves the prior transposition
+and active tone unchanged.
+
 ### Set Temperament
 
 Updates the helper's active chromatic temperament at runtime.
@@ -429,6 +480,10 @@ When accepted:
 -   if a tone is already active, the helper retunes that same scene and
     emits a fresh `tone_started` confirmation with the new authoritative
     frequencies.
+
+### Set Reference A
+
+Updates the helper's reference A calibration at runtime.
 
 Rules:
 
@@ -619,6 +674,7 @@ Valid stdout:
     {"type":"tone_started","note":"A2","frequency_hz":110.0}
     {"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}
     {"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}
+    {"type":"tone_started","note":"A4","frequency_hz":440.0,"scene_id":"pedal","intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A3","frequency_hz":220.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}
     {"type":"tone_stopped"}
     {"type":"no_signal"}
 
