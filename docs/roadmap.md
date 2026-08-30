@@ -7,7 +7,10 @@ without becoming a DAW or general-purpose audio workstation.
 
 For the ordered implementation slices inside `v0.1`, see
 `docs/v0.1-implementation.md`. For the broader path from `v0.1` to
-`v1.0`, see `docs/v1.0-implementation.md`.
+`v1.0`, see `docs/v1.0-implementation.md`. For the post-`1.0`
+implementation path toward `v2.0`, see `docs/v2.0-implementation.md`.
+For the focused `v1.5` UX cleanup milestone before that broader
+expansion, see `docs/v1.5-implementation.md`.
 
 ## Naming
 

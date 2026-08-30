@@ -12,16 +12,14 @@ FocusScope {
   property bool popoutSwitchClosing: false
   property string configTransferStatusText: ""
   property bool configTransferStatusError: false
+  property string activeDestination: "tune"
 
   readonly property color foreground: root.bar ? root.bar.foreground : Color.foreground
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   readonly property bool verticalBar: root.hostWidget ? root.hostWidget.vertical : false
-  readonly property bool expandedLayout: root.hostWidget ? root.hostWidget.popupExpanded : false
   readonly property bool highContrast: root.hostWidget ? root.hostWidget.highContrastMode : false
   readonly property bool reducedMotion: root.hostWidget ? root.hostWidget.reducedMotionMode : false
-  readonly property real preferredContentWidth: expandedLayout
-    ? (verticalBar ? Style.space(360) : Style.space(470))
-    : (verticalBar ? Style.space(340) : Style.space(392))
+  readonly property real preferredContentWidth: verticalBar ? Style.space(360) : Style.space(470)
   readonly property real popupMaxWidth: verticalBar ? Style.space(400) : Style.space(540)
   readonly property real popupMaxHeight: Style.space(620)
   readonly property int quickNoteColumns: verticalBar ? 2 : 3
@@ -30,8 +28,44 @@ FocusScope {
   readonly property color quietTextColor: highContrast ? root.foreground : Qt.darker(root.foreground, 1.3)
   readonly property real secondaryTextOpacity: highContrast ? 0.92 : 0.74
   readonly property string keyboardHintText: root.hostWidget ? root.hostWidget.keyboardShortcutSummary : ""
+  readonly property string quickTuneHintText: {
+    if (!root.hostWidget) return ""
+    if (root.hostWidget.referencePlaybackMode === "drone") return "Quick notes use the current drone interval."
+    if (root.hostWidget.referencePlaybackMode === "chord") return "Quick notes use the current chord shape."
+    return ""
+  }
+  readonly property var popupDestinations: [
+    { value: "tune", label: "Tune" },
+    { value: "reference", label: "Reference" },
+    { value: "metronome", label: "Metronome" },
+    { value: "presets", label: "Presets" },
+    { value: "advanced", label: "Advanced" },
+  ]
+
+  function normalizeDestination(value) {
+    var next = String(value || "").toLowerCase()
+    if (next === "reference") return next
+    if (next === "metronome") return next
+    if (next === "presets") return next
+    if (next === "advanced") return next
+    return "tune"
+  }
+
+  function setActiveDestination(value) {
+    var next = normalizeDestination(value)
+    if (next === activeDestination) {
+      if (opened) {
+        scrollView.contentY = 0
+        Qt.callLater(root.focusInitialControl)
+      }
+      return
+    }
+
+    activeDestination = next
+  }
 
   function open() {
+    activeDestination = "tune"
     opened = true
   }
 
@@ -77,17 +111,31 @@ FocusScope {
   function focusInitialControl() {
     if (!opened) return
 
-    var target = quickNoteRepeater.count > 0 ? quickNoteRepeater.itemAt(0) : null
-    if (!target) target = playToneButton
+    var target = null
+    if (activeDestination === "reference") target = playToneButton
+    else if (activeDestination === "metronome") target = metronomeToggleButton
+    else if (activeDestination === "presets") target = favoriteSceneButton
+    else if (activeDestination === "advanced")
+      target = restartAudioButton.enabled ? restartAudioButton : referenceAResetButton
+    else target = quickNoteRepeater.count > 0 ? quickNoteRepeater.itemAt(0) : powerButton
+
     if (!target) target = powerButton
+    if (!target) target = destinationTabRepeater.count > 0 ? destinationTabRepeater.itemAt(0) : null
     if (target && target.forceActiveFocus) target.forceActiveFocus()
   }
 
   onOpenedChanged: {
     if (opened) {
+      scrollView.contentY = 0
       Qt.callLater(root.focusInitialControl)
       Qt.callLater(root.ensureConfigTransferTextLoaded)
     }
+  }
+
+  onActiveDestinationChanged: {
+    if (!opened) return
+    scrollView.contentY = 0
+    Qt.callLater(root.focusInitialControl)
   }
 
   onHostWidgetChanged: Qt.callLater(root.ensureConfigTransferTextLoaded)
@@ -288,6 +336,7 @@ FocusScope {
     contentHeight: popup.fittedContentHeight(contentColumn.implicitHeight, root.popupMaxHeight)
 
     Flickable {
+      id: scrollView
       anchors.fill: parent
       contentWidth: width
       contentHeight: contentColumn.implicitHeight
@@ -301,7 +350,7 @@ FocusScope {
 
         Column {
           width: parent.width
-          spacing: Style.space(6)
+          spacing: Style.space(4)
 
           Text {
             width: parent.width
@@ -315,6 +364,7 @@ FocusScope {
 
           Text {
             width: parent.width
+            visible: root.hostWidget ? root.hostWidget.selectedPresetLabel !== "" : false
             textFormat: Text.PlainText
             text: root.hostWidget ? root.hostWidget.selectedPresetLabel : ""
             color: root.foreground
@@ -322,57 +372,6 @@ FocusScope {
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
-          }
-
-          Flow {
-            width: parent.width
-            spacing: Style.space(6)
-
-            Button {
-              id: powerButton
-              text: root.hostWidget && (root.hostWidget.helperState === "inactive" || root.hostWidget.helperState === "error") ? "Turn on" : "Turn off"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              bordered: true
-              focusable: true
-              enabled: root.hostWidget && root.hostWidget.helperState !== "starting"
-              opacity: enabled ? 1.0 : 0.5
-              onClicked: if (root.hostWidget) root.hostWidget.toggleHelper()
-            }
-
-            Button {
-              text: "Restart"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              bordered: true
-              focusable: true
-              enabled: root.hostWidget && root.hostWidget.helperState !== "starting"
-              opacity: enabled ? 1.0 : 0.5
-              onClicked: if (root.hostWidget) root.hostWidget.restartHelper()
-            }
-
-            Button {
-              text: root.hostWidget && root.hostWidget.popupExpanded ? "Compact" : "Expanded"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              bordered: true
-              focusable: true
-              onClicked: if (root.hostWidget) root.hostWidget.togglePopupLayoutMode()
-            }
-
-            Button {
-              text: root.hostWidget && root.hostWidget.currentQuickSwitchFavorite ? "Unfavorite" : "Favorite"
-              selected: root.hostWidget ? root.hostWidget.currentQuickSwitchFavorite : false
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              bordered: true
-              focusable: true
-              onClicked: if (root.hostWidget) root.hostWidget.toggleCurrentQuickSwitchFavorite()
-            }
           }
         }
 
@@ -537,60 +536,75 @@ FocusScope {
           }
         }
 
-        Text {
+        Flow {
           width: parent.width
-          textFormat: Text.PlainText
-          text: root.hostWidget ? root.hostWidget.statusText : ""
-          color: root.hostWidget && root.hostWidget.hasAlert ? Color.urgent : root.foreground
-          opacity: root.hostWidget && root.hostWidget.hasAlert ? 1.0 : root.secondaryTextOpacity
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
-          font.bold: root.highContrast && root.hostWidget && root.hostWidget.pitchActive
-          wrapMode: Text.WordWrap
-        }
+          spacing: Style.space(6)
 
-        Text {
-          width: parent.width
-          visible: keyboardHintText !== ""
-          textFormat: Text.PlainText
-          text: keyboardHintText
-          color: root.quietTextColor
-          opacity: root.secondaryTextOpacity
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
+          Repeater {
+            id: destinationTabRepeater
+            model: root.popupDestinations
 
-        Text {
-          width: parent.width
-          visible: root.hostWidget ? root.hostWidget.detailText !== "" : false
-          textFormat: Text.PlainText
-          text: root.hostWidget ? root.hostWidget.detailText : ""
-          color: root.quietTextColor
-          opacity: root.secondaryTextOpacity
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
+            Button {
+              required property var modelData
 
-        PanelSeparator {
-          foreground: root.foreground
+              text: String(modelData.label || "")
+              selected: root.activeDestination === String(modelData.value || "")
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              verticalPadding: Style.space(7)
+              focusable: true
+              onClicked: root.setActiveDestination(String(modelData.value || ""))
+            }
+          }
         }
 
         Item {
-          visible: root.hostWidget ? (root.hostWidget.hasQuickSwitches || root.expandedLayout) : false
+          visible: root.activeDestination === "tune"
           width: parent.width
-          height: visible ? quickSwitchColumn.implicitHeight : 0
+          height: visible ? tuneSection.implicitHeight : 0
 
           Column {
-            id: quickSwitchColumn
+            id: tuneSection
             width: parent.width
-            spacing: Style.space(8)
+            spacing: Style.space(10)
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                id: powerButton
+                text: root.hostWidget && (root.hostWidget.helperState === "inactive" || root.hostWidget.helperState === "error") ? "Turn on" : "Turn off"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                bordered: true
+                focusable: true
+                enabled: root.hostWidget && root.hostWidget.helperState !== "starting"
+                opacity: enabled ? 1.0 : 0.5
+                onClicked: if (root.hostWidget) root.hostWidget.toggleHelper()
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.statusText !== "" : false
+              textFormat: Text.PlainText
+              text: root.hostWidget ? root.hostWidget.statusText : ""
+              color: root.hostWidget && root.hostWidget.hasAlert ? Color.urgent : root.foreground
+              opacity: root.hostWidget && root.hostWidget.hasAlert ? 1.0 : root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: root.highContrast && root.hostWidget && root.hostWidget.pitchActive
+              wrapMode: Text.WordWrap
+            }
 
             Text {
               width: parent.width
               textFormat: Text.PlainText
-              text: "Quick switch"
+              text: root.hostWidget ? root.hostWidget.quickTuneHeadingText : "Quick tune"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -599,15 +613,81 @@ FocusScope {
 
             Text {
               width: parent.width
+              visible: quickTuneHintText !== ""
               textFormat: Text.PlainText
-              text: root.hostWidget
-                ? "Favorites save the current preset, reference scene, and metronome setup. Recents update when you play a tone, start the metronome, or switch presets."
-                : ""
+              text: quickTuneHintText
               color: root.quietTextColor
               opacity: root.secondaryTextOpacity
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
+            }
+
+            Grid {
+              id: quickNoteGrid
+              width: parent.width
+              columns: root.quickNoteColumns
+              rowSpacing: Style.space(6)
+              columnSpacing: Style.space(6)
+
+              Repeater {
+                id: quickNoteRepeater
+                model: root.hostWidget ? root.hostWidget.selectedPresetNotes.slice(0, 6) : []
+
+                Button {
+                  required property var modelData
+                  required property int index
+
+                  width: (quickNoteGrid.width - quickNoteGrid.columnSpacing * Math.max(0, quickNoteGrid.columns - 1)) / Math.max(1, quickNoteGrid.columns)
+                  text: root.hostWidget ? ((index + 1) + "  " + root.hostWidget.displayNoteLabel(String(modelData))) : String(modelData)
+                  selected: root.hostWidget ? root.hostWidget.sameNoteText(root.hostWidget.selectedReferenceCommandNoteLabel, String(modelData)) : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(8)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.playReferenceNoteString(String(modelData))
+                }
+              }
+            }
+          }
+        }
+
+        Item {
+          visible: root.activeDestination === "presets"
+          width: parent.width
+          height: visible ? quickSwitchColumn.implicitHeight : 0
+
+          Column {
+            id: quickSwitchColumn
+            width: parent.width
+            spacing: Style.space(8)
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                textFormat: Text.PlainText
+                text: "Quick switch"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+
+              Button {
+                id: favoriteSceneButton
+                text: root.hostWidget && root.hostWidget.currentQuickSwitchFavorite ? "Remove favorite" : "Save favorite"
+                selected: root.hostWidget ? root.hostWidget.currentQuickSwitchFavorite : false
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                bordered: true
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.toggleCurrentQuickSwitchFavorite()
+              }
             }
 
             Text {
@@ -682,72 +762,23 @@ FocusScope {
                 }
               }
             }
-          }
-        }
 
-        PanelSeparator {
-          visible: root.hostWidget ? (root.hostWidget.hasQuickSwitches || root.expandedLayout) : false
-          foreground: root.foreground
-        }
-
-        Text {
-          width: parent.width
-          textFormat: Text.PlainText
-          text: root.hostWidget ? root.hostWidget.quickTuneHeadingText : "Quick tune"
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
-        }
-
-        Text {
-          width: parent.width
-          textFormat: Text.PlainText
-          text: root.hostWidget ? (root.hostWidget.referencePlaybackMode === "drone"
-            ? "Quick notes reuse the current drone interval. Use Left/Right to move the root and [ or ] to change the interval."
-            : (root.hostWidget.referencePlaybackMode === "chord"
-              ? "Quick notes reuse the current chord shape. Use Left/Right to move the root and [ or ] to change the chord."
-              : (root.hostWidget.standardGuitarPresetSelected
-                ? "Press 1-6 for the standard string references. Use Left/Right to step chromatically."
-                : "Preset notes stay one keypress away. Use Left/Right to step chromatically."))) : ""
-          color: root.quietTextColor
-          opacity: root.secondaryTextOpacity
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
-
-        Grid {
-          id: quickNoteGrid
-          width: parent.width
-          columns: root.quickNoteColumns
-          rowSpacing: Style.space(6)
-          columnSpacing: Style.space(6)
-
-          Repeater {
-            id: quickNoteRepeater
-            model: root.hostWidget ? root.hostWidget.selectedPresetNotes.slice(0, 6) : []
-
-            Button {
-              required property var modelData
-              required property int index
-
-              width: (quickNoteGrid.width - quickNoteGrid.columnSpacing * Math.max(0, quickNoteGrid.columns - 1)) / Math.max(1, quickNoteGrid.columns)
-              text: root.hostWidget ? ((index + 1) + "  " + root.hostWidget.displayNoteLabel(String(modelData))) : String(modelData)
-              selected: root.hostWidget ? root.hostWidget.sameNoteText(root.hostWidget.selectedReferenceCommandNoteLabel, String(modelData)) : false
-              bordered: true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              verticalPadding: Style.space(8)
-              focusable: true
-              onClicked: if (root.hostWidget) root.hostWidget.playReferenceNoteString(String(modelData))
+            Text {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.detailText !== "" : false
+              textFormat: Text.PlainText
+              text: root.hostWidget ? root.hostWidget.detailText : ""
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
           }
         }
 
         Item {
-          visible: root.expandedLayout
+          visible: root.activeDestination === "presets"
           width: parent.width
           height: visible ? expandedContent.implicitHeight : 0
 
@@ -821,473 +852,445 @@ FocusScope {
           }
         }
 
-        PanelSeparator {
-          foreground: root.foreground
-        }
-
-        Text {
+        Item {
+          visible: root.activeDestination === "reference"
           width: parent.width
-          textFormat: Text.PlainText
-          text: "Reference tone"
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
-        }
+          height: visible ? referenceColumn.implicitHeight : 0
 
-        ButtonGroup {
-          width: parent.width
-          options: [
-            { value: "single", label: "Single" },
-            { value: "drone", label: "Drone" },
-            { value: "chord", label: "Chord" },
-          ]
-          value: root.hostWidget ? root.hostWidget.referencePlaybackMode : "single"
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          fontSize: Style.font.bodySmall
-          onChanged: function(value) {
-            if (root.hostWidget) root.hostWidget.setReferencePlaybackMode(value)
-          }
-        }
-
-        Text {
-          width: parent.width
-          visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "drone" : false
-          textFormat: Text.PlainText
-          text: root.hostWidget
-            ? ("Drone keeps " + root.hostWidget.selectedReferenceNoteLabel + " sounding and adds one note above it.")
-            : ""
-          color: root.quietTextColor
-          opacity: root.secondaryTextOpacity
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
-
-        Flow {
-          width: parent.width
-          visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "drone" : false
-          spacing: Style.space(6)
-
-          Repeater {
-            model: root.hostWidget ? root.hostWidget.referenceIntervalPresets : []
-
-            Button {
-              required property var modelData
-
-              text: String(modelData.label || "")
-              selected: root.hostWidget ? root.hostWidget.selectedReferenceIntervalSemitones === Number(modelData.semitones) : false
-              bordered: true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              verticalPadding: Style.space(7)
-              focusable: true
-              onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceIntervalSemitones(Number(modelData.semitones))
-            }
-          }
-        }
-
-        Text {
-          width: parent.width
-          visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "chord" : false
-          textFormat: Text.PlainText
-          text: root.hostWidget
-            ? ("Chord keeps " + root.hostWidget.selectedReferenceNoteLabel + " as the root and adds a fixed preset shape above it.")
-            : ""
-          color: root.quietTextColor
-          opacity: root.secondaryTextOpacity
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
-
-        Flow {
-          width: parent.width
-          visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "chord" : false
-          spacing: Style.space(6)
-
-          Repeater {
-            model: root.hostWidget ? root.hostWidget.referenceChordPresets : []
-
-            Button {
-              required property var modelData
-
-              text: String(modelData.label || "")
-              selected: root.hostWidget ? root.hostWidget.selectedReferenceChordId === String(modelData.id || "") : false
-              bordered: true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              verticalPadding: Style.space(7)
-              focusable: true
-              onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceChordId(String(modelData.id || ""))
-            }
-          }
-        }
-
-        Grid {
-          id: noteGrid
-          width: parent.width
-          columns: root.referenceGridColumns
-          rowSpacing: Style.space(6)
-          columnSpacing: Style.space(6)
-
-          Repeater {
-            model: root.hostWidget ? root.hostWidget.pitchClasses : []
-
-            Button {
-              required property var modelData
-              required property int index
-
-              width: (noteGrid.width - noteGrid.columnSpacing * Math.max(0, noteGrid.columns - 1)) / Math.max(1, noteGrid.columns)
-              text: String(modelData)
-              selected: root.hostWidget ? root.hostWidget.selectedReferencePitchClassIndex === index : false
-              bordered: true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              verticalPadding: Style.space(7)
-              focusable: true
-              onClicked: if (root.hostWidget) root.hostWidget.selectPitchClass(index)
-            }
-          }
-        }
-
-        Row {
-          width: parent.width
-          spacing: Style.space(6)
-
-          Button {
-            id: previousNoteButton
-            width: Style.space(48)
-            text: "<"
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.body
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceSemitone(-1)
-          }
-
-          BorderSurface {
-            width: parent.width - previousNoteButton.width - nextNoteButton.width - parent.spacing * 2
-            height: Math.max(previousNoteButton.implicitHeight, Style.space(34))
-            radius: Style.cornerRadius
-            color: Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.05)
-            borderSpec: Border.controlSpec(root.highContrast ? "focus" : "normal", root.foreground, Color.accent)
+          Column {
+            id: referenceColumn
+            width: parent.width
+            spacing: Style.space(10)
 
             Text {
-              anchors.centerIn: parent
+              width: parent.width
               textFormat: Text.PlainText
-              text: root.hostWidget ? root.hostWidget.selectedReferenceNoteLabel : "A4"
+              text: "Reference tone"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               font.bold: true
             }
-          }
 
-          Button {
-            id: nextNoteButton
-            width: Style.space(48)
-            text: ">"
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.body
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceSemitone(1)
-          }
-        }
+            ButtonGroup {
+              width: parent.width
+              options: [
+                { value: "single", label: "Single" },
+                { value: "drone", label: "Drone" },
+                { value: "chord", label: "Chord" },
+              ]
+              value: root.hostWidget ? root.hostWidget.referencePlaybackMode : "single"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              onChanged: function(value) {
+                if (root.hostWidget) root.hostWidget.setReferencePlaybackMode(value)
+              }
+            }
 
-        Flow {
-          width: parent.width
-          spacing: Style.space(6)
+            Flow {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "drone" : false
+              spacing: Style.space(6)
 
-          Button {
-            id: octaveDownButton
-            text: "Oct-"
-            width: Math.max(Style.space(58), implicitWidth)
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceOctave(-1)
-          }
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.referenceIntervalPresets : []
 
-          Button {
-            id: octaveUpButton
-            text: "Oct+"
-            width: Math.max(Style.space(58), implicitWidth)
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.changeReferenceOctave(1)
-          }
+                Button {
+                  required property var modelData
 
-          Button {
-            id: playToneButton
-            text: root.hostWidget
-              ? (root.hostWidget.selectedReferenceToneActive
-                ? ("Stop " + root.hostWidget.selectedReferenceSceneLabel)
-                : (root.hostWidget.toneActive
-                  ? ("Retune to " + root.hostWidget.selectedReferenceSceneLabel)
-                  : ("Play " + root.hostWidget.selectedReferenceSceneLabel)))
-              : "Play"
-            selected: root.hostWidget ? root.hostWidget.selectedReferenceToneActive : false
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.toggleSelectedReferenceTone()
-          }
-        }
+                  text: String(modelData.label || "")
+                  selected: root.hostWidget ? root.hostWidget.selectedReferenceIntervalSemitones === Number(modelData.semitones) : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(7)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceIntervalSemitones(Number(modelData.semitones))
+                }
+              }
+            }
 
-        PanelSeparator {
-          foreground: root.foreground
-        }
+            Flow {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "chord" : false
+              spacing: Style.space(6)
 
-        Text {
-          width: parent.width
-          textFormat: Text.PlainText
-          text: "Metronome"
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
-        }
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.referenceChordPresets : []
 
-        Text {
-          width: parent.width
-          textFormat: Text.PlainText
-          text: root.hostWidget ? root.hostWidget.metronomeHintText : ""
-          color: root.quietTextColor
-          opacity: root.secondaryTextOpacity
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
+                Button {
+                  required property var modelData
 
-        Row {
-          width: parent.width
-          spacing: Style.space(6)
+                  text: String(modelData.label || "")
+                  selected: root.hostWidget ? root.hostWidget.selectedReferenceChordId === String(modelData.id || "") : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(7)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceChordId(String(modelData.id || ""))
+                }
+              }
+            }
 
-          Repeater {
-            model: root.hostWidget ? root.hostWidget.metronomeBeatsPerBar : 4
+            Grid {
+              id: noteGrid
+              width: parent.width
+              columns: root.referenceGridColumns
+              rowSpacing: Style.space(6)
+              columnSpacing: Style.space(6)
 
-            Rectangle {
-              required property int index
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.pitchClasses : []
 
-              width: index === 0 ? Style.space(28) : Style.space(22)
-              height: Style.space(22)
-              radius: Style.cornerRadius
-              color: root.hostWidget && root.hostWidget.metronomeBeatInBar === index + 1
-                ? Util.alpha(Color.accent, root.highContrast ? 0.34 : 0.22)
-                : Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.06)
-              border.width: root.highContrast ? 1 : 0
-              border.color: root.hostWidget && root.hostWidget.metronomeBeatInBar === index + 1
-                ? Util.alpha(Color.accent, root.highContrast ? 0.92 : 0.62)
-                : Util.alpha(root.foreground, root.highContrast ? 0.44 : 0.22)
+                Button {
+                  required property var modelData
+                  required property int index
 
-              Text {
-                anchors.centerIn: parent
-                textFormat: Text.PlainText
-                text: String(index + 1)
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: index === 0 || (root.hostWidget ? root.hostWidget.metronomeBeatInBar === index + 1 : false)
+                  width: (noteGrid.width - noteGrid.columnSpacing * Math.max(0, noteGrid.columns - 1)) / Math.max(1, noteGrid.columns)
+                  text: String(modelData)
+                  selected: root.hostWidget ? root.hostWidget.selectedReferencePitchClassIndex === index : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(7)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.selectPitchClass(index)
+                }
+              }
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                id: previousNoteButton
+                width: Style.space(48)
+                text: "<"
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.body
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.changeReferenceSemitone(-1)
+              }
+
+              BorderSurface {
+                width: parent.width - previousNoteButton.width - nextNoteButton.width - parent.spacing * 2
+                height: Math.max(previousNoteButton.implicitHeight, Style.space(34))
+                radius: Style.cornerRadius
+                color: Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.05)
+                borderSpec: Border.controlSpec(root.highContrast ? "focus" : "normal", root.foreground, Color.accent)
+
+                Text {
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: root.hostWidget ? root.hostWidget.selectedReferenceNoteLabel : "A4"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                }
+              }
+
+              Button {
+                id: nextNoteButton
+                width: Style.space(48)
+                text: ">"
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.body
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.changeReferenceSemitone(1)
+              }
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                id: octaveDownButton
+                text: "Oct-"
+                width: Math.max(Style.space(58), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.changeReferenceOctave(-1)
+              }
+
+              Button {
+                id: octaveUpButton
+                text: "Oct+"
+                width: Math.max(Style.space(58), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.changeReferenceOctave(1)
+              }
+
+              Button {
+                id: playToneButton
+                text: root.hostWidget
+                  ? (root.hostWidget.selectedReferenceToneActive
+                    ? ("Stop " + root.hostWidget.selectedReferenceSceneLabel)
+                    : (root.hostWidget.toneActive
+                      ? ("Retune to " + root.hostWidget.selectedReferenceSceneLabel)
+                      : ("Play " + root.hostWidget.selectedReferenceSceneLabel)))
+                  : "Play"
+                selected: root.hostWidget ? root.hostWidget.selectedReferenceToneActive : false
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.toggleSelectedReferenceTone()
               }
             }
           }
         }
 
-        Row {
-          width: parent.width
-          visible: root.hostWidget ? root.hostWidget.metronomeSubdivision > 1 : false
-          spacing: Style.space(6)
-
-          Repeater {
-            model: root.hostWidget ? root.hostWidget.metronomeSubdivision : 1
-
-            Rectangle {
-              required property int index
-
-              width: Style.space(18)
-              height: Style.space(10)
-              radius: height / 2
-              color: root.hostWidget && root.hostWidget.metronomeSubdivisionStep === index + 1
-                ? Util.alpha(Color.accent, root.highContrast ? 0.34 : 0.22)
-                : Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.06)
-              border.width: root.highContrast ? 1 : 0
-              border.color: root.hostWidget && root.hostWidget.metronomeSubdivisionStep === index + 1
-                ? Util.alpha(Color.accent, root.highContrast ? 0.92 : 0.62)
-                : Util.alpha(root.foreground, root.highContrast ? 0.44 : 0.22)
-            }
-          }
-        }
-
-        Flow {
-          width: parent.width
-          spacing: Style.space(6)
-
-          Button {
-            text: "-1"
-            width: Style.space(64)
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.changeMetronomeBpm(-1)
-          }
-
-          Button {
-            text: root.hostWidget ? (root.hostWidget.metronomeBpm + " BPM") : "100 BPM"
-            width: Math.max(Style.space(90), implicitWidth)
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.resetMetronomeBpm()
-          }
-
-          Button {
-            text: "+1"
-            width: Style.space(64)
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.changeMetronomeBpm(1)
-          }
-
-          Button {
-            text: "Tap"
-            width: Math.max(Style.space(70), implicitWidth)
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.tapMetronomeTempo()
-          }
-
-          Button {
-            text: root.hostWidget && root.hostWidget.metronomeActive ? "Stop" : "Start"
-            width: Math.max(Style.space(84), implicitWidth)
-            selected: root.hostWidget ? root.hostWidget.metronomeActive : false
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            focusable: true
-            onClicked: if (root.hostWidget) root.hostWidget.toggleMetronome()
-          }
-        }
-
         Item {
-          visible: root.expandedLayout
+          visible: root.activeDestination === "metronome"
           width: parent.width
-          height: visible ? metronomeControlsColumn.implicitHeight : 0
+          height: visible ? metronomeSection.implicitHeight : 0
 
           Column {
-            id: metronomeControlsColumn
+            id: metronomeSection
             width: parent.width
-            spacing: Style.space(8)
+            spacing: Style.space(10)
 
             Text {
               width: parent.width
               textFormat: Text.PlainText
-              text: "Meter"
+              text: "Metronome"
               color: root.foreground
               font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
+              font.pixelSize: Style.font.body
               font.bold: true
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.metronomeBeatsPerBar : 4
+
+                Rectangle {
+                  required property int index
+
+                  width: index === 0 ? Style.space(28) : Style.space(22)
+                  height: Style.space(22)
+                  radius: Style.cornerRadius
+                  color: root.hostWidget && root.hostWidget.metronomeBeatInBar === index + 1
+                    ? Util.alpha(Color.accent, root.highContrast ? 0.34 : 0.22)
+                    : Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.06)
+                  border.width: root.highContrast ? 1 : 0
+                  border.color: root.hostWidget && root.hostWidget.metronomeBeatInBar === index + 1
+                    ? Util.alpha(Color.accent, root.highContrast ? 0.92 : 0.62)
+                    : Util.alpha(root.foreground, root.highContrast ? 0.44 : 0.22)
+
+                  Text {
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: String(index + 1)
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: index === 0 || (root.hostWidget ? root.hostWidget.metronomeBeatInBar === index + 1 : false)
+                  }
+                }
+              }
+            }
+
+            Row {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.metronomeSubdivision > 1 : false
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.metronomeSubdivision : 1
+
+                Rectangle {
+                  required property int index
+
+                  width: Style.space(18)
+                  height: Style.space(10)
+                  radius: height / 2
+                  color: root.hostWidget && root.hostWidget.metronomeSubdivisionStep === index + 1
+                    ? Util.alpha(Color.accent, root.highContrast ? 0.34 : 0.22)
+                    : Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.06)
+                  border.width: root.highContrast ? 1 : 0
+                  border.color: root.hostWidget && root.hostWidget.metronomeSubdivisionStep === index + 1
+                    ? Util.alpha(Color.accent, root.highContrast ? 0.92 : 0.62)
+                    : Util.alpha(root.foreground, root.highContrast ? 0.44 : 0.22)
+                }
+              }
             }
 
             Flow {
               width: parent.width
               spacing: Style.space(6)
 
-              Repeater {
-                model: root.hostWidget ? root.hostWidget.metronomeMeterPresets : []
+              Button {
+                text: "-1"
+                width: Style.space(64)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.changeMetronomeBpm(-1)
+              }
 
-                Button {
-                  required property var modelData
+              Button {
+                text: root.hostWidget ? (root.hostWidget.metronomeBpm + " BPM") : "100 BPM"
+                width: Math.max(Style.space(90), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.resetMetronomeBpm()
+              }
 
-                  text: String(modelData.label || "")
-                  selected: root.hostWidget
-                    ? (root.hostWidget.metronomeBeatsPerBar === Number(modelData.beatsPerBar)
-                      && root.hostWidget.metronomeBeatUnit === Number(modelData.beatUnit))
-                    : false
-                  bordered: true
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.bodySmall
-                  verticalPadding: Style.space(7)
-                  focusable: true
-                  onClicked: if (root.hostWidget) root.hostWidget.setMetronomeMeter(Number(modelData.beatsPerBar), Number(modelData.beatUnit))
-                }
+              Button {
+                text: "+1"
+                width: Style.space(64)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.changeMetronomeBpm(1)
+              }
+
+              Button {
+                text: "Tap"
+                width: Math.max(Style.space(70), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.tapMetronomeTempo()
+              }
+
+              Button {
+                id: metronomeToggleButton
+                text: root.hostWidget && root.hostWidget.metronomeActive ? "Stop" : "Start"
+                width: Math.max(Style.space(84), implicitWidth)
+                selected: root.hostWidget ? root.hostWidget.metronomeActive : false
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.toggleMetronome()
               }
             }
 
-            Text {
+            Column {
+              id: metronomeControlsColumn
               width: parent.width
-              textFormat: Text.PlainText
-              text: "Subdivision"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              font.bold: true
-            }
+              spacing: Style.space(8)
 
-            Flow {
-              width: parent.width
-              spacing: Style.space(6)
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                text: "Meter"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
 
-              Repeater {
-                model: root.hostWidget ? root.hostWidget.metronomeSubdivisionPresets : []
+              Flow {
+                width: parent.width
+                spacing: Style.space(6)
 
-                Button {
-                  required property var modelData
+                Repeater {
+                  model: root.hostWidget ? root.hostWidget.metronomeMeterPresets : []
 
-                  text: String(modelData.label || "")
-                  selected: root.hostWidget ? root.hostWidget.metronomeSubdivision === Number(modelData.steps) : false
-                  bordered: true
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.bodySmall
-                  verticalPadding: Style.space(7)
-                  focusable: true
-                  onClicked: if (root.hostWidget) root.hostWidget.setMetronomeSubdivision(Number(modelData.steps))
+                  Button {
+                    required property var modelData
+
+                    text: String(modelData.label || "")
+                    selected: root.hostWidget
+                      ? (root.hostWidget.metronomeBeatsPerBar === Number(modelData.beatsPerBar)
+                        && root.hostWidget.metronomeBeatUnit === Number(modelData.beatUnit))
+                      : false
+                    bordered: true
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    verticalPadding: Style.space(7)
+                    focusable: true
+                    onClicked: if (root.hostWidget) root.hostWidget.setMetronomeMeter(Number(modelData.beatsPerBar), Number(modelData.beatUnit))
+                  }
                 }
               }
-            }
 
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: "Tap sets tempo from your last few hits. Meter and subdivision restart on beat one when changed live."
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                text: "Subdivision"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+
+              Flow {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Repeater {
+                  model: root.hostWidget ? root.hostWidget.metronomeSubdivisionPresets : []
+
+                  Button {
+                    required property var modelData
+
+                    text: String(modelData.label || "")
+                    selected: root.hostWidget ? root.hostWidget.metronomeSubdivision === Number(modelData.steps) : false
+                    bordered: true
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.bodySmall
+                    verticalPadding: Style.space(7)
+                    focusable: true
+                    onClicked: if (root.hostWidget) root.hostWidget.setMetronomeSubdivision(Number(modelData.steps))
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                text: root.hostWidget ? root.hostWidget.metronomeHintText : ""
+                color: root.quietTextColor
+                opacity: root.secondaryTextOpacity
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
             }
           }
         }
 
         Item {
-          visible: root.expandedLayout
+          visible: root.activeDestination === "advanced"
           width: parent.width
           height: visible ? controlsColumn.implicitHeight : 0
 
@@ -1295,6 +1298,29 @@ FocusScope {
             id: controlsColumn
             width: parent.width
             spacing: Style.space(10)
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Recovery"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Button {
+              id: restartAudioButton
+              text: "Restart audio"
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              focusable: true
+              enabled: root.hostWidget && root.hostWidget.helperState !== "starting"
+              opacity: enabled ? 1.0 : 0.5
+              onClicked: if (root.hostWidget) root.hostWidget.restartHelper()
+            }
 
             PanelSeparator {
               foreground: root.foreground
@@ -1326,6 +1352,7 @@ FocusScope {
               }
 
               Button {
+                id: referenceAResetButton
                 text: root.hostWidget ? ("A4 = " + root.hostWidget.formatReferenceA(root.hostWidget.referenceAHz)) : "A4 = 440.0 Hz"
                 bordered: true
                 foreground: root.foreground
@@ -1358,17 +1385,6 @@ FocusScope {
               }
             }
 
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: "Use the center button for a fast reset to concert pitch."
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
             PanelSeparator {
               foreground: root.foreground
             }
@@ -1381,21 +1397,6 @@ FocusScope {
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               font.bold: true
-            }
-
-            ButtonGroup {
-              width: parent.width
-              options: [
-                { value: "compact", label: "Compact" },
-                { value: "expanded", label: "Expanded" },
-              ]
-              value: root.hostWidget ? root.hostWidget.popupLayoutMode : "compact"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              onChanged: function(value) {
-                if (root.hostWidget) root.hostWidget.setPopupLayoutMode(value)
-              }
             }
 
             Toggle {
@@ -1454,6 +1455,32 @@ FocusScope {
             Text {
               width: parent.width
               textFormat: Text.PlainText
+              text: "Keyboard"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              visible: keyboardHintText !== ""
+              textFormat: Text.PlainText
+              text: keyboardHintText
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
               text: "Advanced tuning"
               color: root.foreground
               font.family: root.fontFamily
@@ -1465,7 +1492,7 @@ FocusScope {
               width: parent.width
               textFormat: Text.PlainText
               text: root.hostWidget
-                ? "Transposition applies one helper-owned semitone offset across detected note names and reference tones. Changing it live keeps the same sounding pitch and relabels the note space around it."
+                ? "Transposition shifts detected note labels and reference labels together."
                 : ""
               color: root.quietTextColor
               opacity: root.secondaryTextOpacity
@@ -1552,7 +1579,7 @@ FocusScope {
             Text {
               width: parent.width
               textFormat: Text.PlainText
-              text: "Load current to export the supported JSON settings. Paste exported JSON here and apply it to import. The transfer format omits the widget id and unrelated host keys."
+              text: "Export or import JSON settings."
               color: root.quietTextColor
               opacity: root.secondaryTextOpacity
               font.family: root.fontFamily

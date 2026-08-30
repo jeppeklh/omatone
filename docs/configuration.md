@@ -35,7 +35,6 @@ For a bar widget instance, the entry shape is:
   "metronomeBeatsPerBar": 4,
   "metronomeBeatUnit": 4,
   "metronomeSubdivision": 1,
-  "popupLayoutMode": "compact",
   "highContrastMode": false,
   "reducedMotionMode": false,
   "favoriteQuickSwitches": [],
@@ -60,18 +59,19 @@ settings file.
 -   `metronomeBeatsPerBar`: last selected metronome meter numerator.
 -   `metronomeBeatUnit`: last selected metronome meter denominator.
 -   `metronomeSubdivision`: last selected per-beat subdivision count.
--   `popupLayoutMode`: `"compact"` or `"expanded"`.
 -   `highContrastMode`: boolean display-preference flag.
 -   `reducedMotionMode`: boolean display-preference flag.
 -   `favoriteQuickSwitches`: bounded list of saved workflow snapshots.
 -   `recentQuickSwitches`: bounded list of recent workflow snapshots.
 
-Unknown keys are preserved when Omatune rewrites its settings entry.
+Unknown keys are preserved when Omatune rewrites its settings entry,
+except for the legacy `popupLayoutMode` key which is removed on the
+next write.
 
 ## Human-Readable Import/Export
 
-Omatune's expanded popup exposes a copy/paste configuration editor for
-the stable settings schema.
+Omatune's `Advanced` popup destination exposes a copy/paste
+configuration editor for the stable settings schema.
 
 The exported document is pretty-printed JSON containing only the
 supported fields listed above, in a stable order. It intentionally omits
@@ -106,7 +106,6 @@ When no persisted configuration exists, Omatune uses:
 -   `metronomeBeatsPerBar = 4`
 -   `metronomeBeatUnit = 4`
 -   `metronomeSubdivision = 1`
--   `popupLayoutMode = "compact"`
 -   `highContrastMode = false`
 -   `reducedMotionMode = false`
 -   `favoriteQuickSwitches = []`
@@ -143,11 +142,6 @@ the supported metronome presets:
 -   `6/8`
 
 `metronomeSubdivision` must be an integer within `1..=4`.
-
-`popupLayoutMode` must be one of:
-
--   `compact`
--   `expanded`
 
 `highContrastMode` and `reducedMotionMode` must be boolean values.
 
@@ -205,7 +199,7 @@ The persisted `transpositionSemitones` value is applied in two places:
     and any active reference tone labels together.
 
 Preset selection, saved quick-switch workflow snapshots, note-spelling
-preference, metronome BPM, meter, subdivision, popup layout, and display
+preference, metronome BPM, meter, subdivision, and display
 accessibility preferences remain UI-owned state. Reference A and
 transposition feed the helper-owned pitch model without forking the
 underlying chromatic tuner into instrument-specific engines.
@@ -233,6 +227,10 @@ arrays.
 
 The later transposition field is additive under that same schema
 version: missing `transpositionSemitones` simply loads as `0`.
+
+The removed `popupLayoutMode` field from pre-`v1.5` cleanup builds is
+tolerated on load and import, ignored by the runtime UI, and omitted on
+the next save or export.
 
 ### Future schema changes
 

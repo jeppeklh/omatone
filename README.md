@@ -34,6 +34,12 @@ subdivisions, and a beat-one accent.
     v0.1 milestone
 -   `docs/v1.0-implementation.md`: required core phases and optional
     expansion phases on the path to a stable 1.0
+-   `docs/v1.5-implementation.md`: ordered cleanup steps for the
+    pre-v2.0 UX milestone
+-   `docs/v2.0-implementation.md`: post-1.0 phases for broader tuning,
+    interoperability, and power-user workflows
+-   `docs/v1.5-ux-review.md`: archived UX review and rationale for the
+    shipped `v1.5` cleanup
 -   `docs/v0.1-verification.md`: automated checks, deterministic helper
     failure simulations, and the manual release checklist
 -   `docs/v1.0-verification.md`: Phase 4 hardening checks, bounded
@@ -56,6 +62,12 @@ subdivisions, and a beat-one accent.
 -   Adjustable A4 reference frequency in the supported calibration range
 -   Optional semitone transposition across detected note labels and
     reference-tone targeting
+-   Stable-width bar feedback with compact state labels and concise hover
+    summaries
+-   Popup destinations for `Tune`, `Reference`, `Metronome`, `Presets`,
+    and `Advanced`
+-   Default `Tune` workflow with immediate `E A D G B E` access and no
+    required scrolling
 -   Persisted reference note, metronome tempo/meter/subdivision, tuning
     preset, and sharp/flat spelling preference
 -   Persisted quick-switch favorites and recents for workflow snapshots

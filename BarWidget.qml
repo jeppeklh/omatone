@@ -48,7 +48,6 @@ BarWidget {
   property string referencePlaybackMode: "single"
   property int selectedReferenceIntervalSemitones: 7
   property string selectedReferenceChordId: "major"
-  property string popupLayoutMode: "compact"
   property bool highContrastMode: false
   property bool reducedMotionMode: false
   property var pendingCommandLines: []
@@ -151,7 +150,6 @@ BarWidget {
   readonly property bool toneActive: activeToneNote !== ""
   readonly property bool inTune: pitchActive && Math.abs(detectedCents) <= 5
   readonly property bool hasAlert: helperRecoveryPending || helperState === "error" || runtimeErrorMessage !== ""
-  readonly property bool popupExpanded: popupLayoutMode === "expanded"
   readonly property bool shouldAnimateUi: !reducedMotionMode
   readonly property bool transpositionActive: transpositionSemitones !== 0
   readonly property bool standardGuitarPresetSelected: selectedPresetId === "guitar.standard"
@@ -215,8 +213,8 @@ BarWidget {
   }
   readonly property string metronomeSummaryText: metronomeBpm + " BPM | " + metronomeMeterLabel + " | " + metronomeSubdivisionLabel + " | " + metronomeBeatText + " | Accent on 1"
   readonly property string metronomeHintText: metronomeActive
-    ? (metronomeMeterLabel + " | " + metronomeSubdivisionLabel + ". BPM, meter, and subdivision changes restart on beat one.")
-    : ("Tap tempo, choose a common meter, and add up to 4x subdivisions. Accent stays on 1.")
+    ? "BPM, meter, and subdivision changes restart on beat one."
+    : "Tap tempo, set a meter, and add subdivisions."
   readonly property bool selectedReferenceToneActive: toneActive
     && sameNoteText(activeToneNote, selectedReferenceCommandNoteLabel)
     && sameIntegerArray(activeToneIntervalsSemitones, selectedReferenceIntervalsSemitones)
@@ -224,25 +222,44 @@ BarWidget {
     if (!helperRecoveryPending) return ""
     return "Recovering the audio helper (attempt " + helperRecoveryAttempt + " of " + helperRecoveryMaxAttempts + "). " + helperRecoveryMessage
   }
+  readonly property string currentErrorSummaryText: {
+    if (runtimeErrorMessage !== "") return runtimeErrorMessage
+    if (helperError !== "") return helperError
+    if (lastStderrLine !== "") return lastStderrLine
+    if (helperState === "error") return "Restart the helper to recover."
+    return ""
+  }
   readonly property string pitchGuidanceText: {
     if (!pitchActive) return ""
     if (inTune) return "In tune"
     return detectedCents < 0 ? "Tune up" : "Tune down"
   }
+  readonly property string barPitchStatusText: {
+    if (!pitchActive) return ""
+    if (inTune) return "="
+    return detectedCents < 0 ? "-" : "+"
+  }
+  readonly property string barToneStateText: {
+    if (!toneActive) return ""
+    if (activeToneSceneKind === "chord") return "CHD"
+    if (activeToneSceneKind === "interval") return "DRN"
+    return "REF"
+  }
+  readonly property string barMeasureText: "CHD Bb8"
   readonly property string stateBadgeText: {
-    if (helperRecoveryPending) return "RECOVERING"
-    if (helperState === "error" || runtimeErrorMessage !== "") return "ERROR"
-    if (helperState === "inactive") return "OFF"
-    if (helperState === "starting") return "STARTING"
-    if (signalState === "no_signal") return "NO SIGNAL"
-    if (pitchActive) return inTune ? "IN TUNE" : (detectedCents < 0 ? "TUNE UP" : "TUNE DOWN")
+    if (helperRecoveryPending) return "Recovering"
+    if (helperState === "error" || runtimeErrorMessage !== "") return "Error"
+    if (helperState === "inactive") return "Off"
+    if (helperState === "starting") return "Starting"
+    if (pitchActive) return inTune ? "In tune" : (detectedCents < 0 ? "Tune up" : "Tune down")
     if (toneActive) {
-      if (activeToneSceneKind === "chord") return "CHORD"
-      if (activeToneSceneKind === "interval") return "DRONE"
-      return "REFERENCE"
+      if (activeToneSceneKind === "chord") return "Reference chord"
+      if (activeToneSceneKind === "interval") return "Drone interval"
+      return "Reference tone"
     }
-    if (metronomeActive) return "METRONOME"
-    return "LISTENING"
+    if (metronomeActive) return "Metronome"
+    if (signalState === "no_signal") return "No signal"
+    return "Listening"
   }
   readonly property string quickTuneHeadingText: standardGuitarPresetSelected ? "Standard guitar" : "Quick tune"
   readonly property string keyboardShortcutSummary: "Keys: 1-6 notes | Ctrl+1-6 favorites | F favorite | Left/Right note | Alt+Up/Down octave | Shift+Left/Right BPM | D mode | [/] shape | M metro | Shift+M tap | Ctrl+M meter | Alt+M subdiv | P play/stop | X stop | T power | R restart | Esc close"
@@ -258,98 +275,120 @@ BarWidget {
     String(normalizeTranspositionSemitones(transpositionSemitones)),
   ]
   readonly property string readoutTitleText: {
-    if (helperRecoveryPending) return "..."
+    if (helperRecoveryPending) return "Recovering audio"
     if (pitchActive) return detectedNoteLabel
     if (toneActive) return activeToneSceneLabel
     if (metronomeActive) return metronomeBpm + " BPM"
-    if (helperState === "error" || runtimeErrorMessage !== "") return "ERR"
-    if (helperState === "starting") return "..."
-    if (helperState === "inactive") return "OFF"
-    return "--"
+    if (helperState === "error" || runtimeErrorMessage !== "") return "Check audio"
+    if (helperState === "starting") return "Opening audio"
+    if (helperState === "inactive") return "Tuner off"
+    if (signalState === "no_signal") return "Play a note"
+    return "Ready"
   }
   readonly property string readoutFooterText: {
     if (pitchActive) return formatSignedCents(detectedCents) + " | " + formatFrequency(detectedFrequencyHz) + " Hz"
-    if (toneActive) return activeTonePlaybackTypeText + " | Root " + formatFrequency(activeToneFrequencyHz) + " Hz | A4 = " + formatReferenceA(referenceAHz)
+    if (toneActive) return "Root " + formatFrequency(activeToneFrequencyHz) + " Hz | A4 = " + formatReferenceA(referenceAHz)
     if (metronomeActive) return metronomeMeterLabel + " | " + metronomeSubdivisionLabel + " | " + metronomeBeatText
     if (helperRecoveryPending) return helperRecoveryStatusText
     if (helperState === "starting") return "Opening microphone and output..."
-    if (helperState === "inactive") return "Tuner is off"
-    if (helperState === "error") return "Restart the helper to recover"
-    if (signalState === "no_signal") return "No signal. Play a note."
-    return "Listening..."
+    if (helperState === "inactive") return "Turn the tuner on to begin capture."
+    if (helperState === "error" || runtimeErrorMessage !== "") return currentErrorSummaryText
+    if (signalState === "no_signal") return "Listening for a steady pitch."
+    return "Listening for pitch..."
   }
   readonly property string statusText: {
-    if (helperRecoveryPending) return helperRecoveryStatusText
-    if (helperState === "error") return helperError !== "" ? helperError : "The audio helper stopped unexpectedly."
+    if (helperRecoveryPending) return "Recovering audio helper."
+    if (helperState === "error") return helperError !== "" ? helperError : "The audio helper stopped."
     if (runtimeErrorMessage !== "") return runtimeErrorMessage
-    if (helperState === "inactive") return "Open the tuner or turn it on to begin capture."
-    if (helperState === "starting") return "Starting the audio helper..."
-    if (pitchActive) return pitchGuidanceText + " | Confidence: " + Math.round(detectedConfidence * 100) + "%"
-    if (toneActive && metronomeActive) return activeTonePlaybackTypeText + " and metronome are active."
-    if (toneActive) return activeTonePlaybackTypeText + " is active."
-    if (metronomeActive) return "Metronome is active at " + metronomeBpm + " BPM in " + metronomeMeterLabel + " with " + metronomeSubdivisionLabel + "."
-    if (signalState === "no_signal") return "No signal. Play a steady note into the microphone."
-    return "Listening for pitch..."
+    if (helperState === "inactive") return "Turn on the tuner to start capture."
+    if (helperState === "starting") return "Starting audio..."
+    if (pitchActive) return pitchGuidanceText
+    if (toneActive && metronomeActive) return "Reference tone and metronome active."
+    if (toneActive) return activeTonePlaybackTypeText + " active."
+    if (metronomeActive) return "Metronome active at " + metronomeBpm + " BPM."
+    if (signalState === "no_signal") return "Play a steady note."
+    return "Listening for pitch."
   }
   readonly property string detailText: {
     if (toneActive)
-      return activeTonePlaybackTypeText + ": " + activeToneSceneLabel
-        + (activeToneVoiceSummaryText !== "" ? (" | Voices: " + activeToneVoiceSummaryText) : "")
-        + (metronomeActive ? (" | Metronome: " + metronomeSummaryText) : "")
-        + (transpositionActive ? (" | Transposition: " + transpositionLabelText) : "")
-        + " | Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
+      return activeToneSceneLabel
+        + (metronomeActive ? (" | " + metronomeBpm + " BPM") : "")
+        + (transpositionActive ? (" | " + transpositionLabelText) : "")
+        + " | " + selectedPresetLabel
     if (pitchActive)
-      return "Detected pitch is matched against the nearest equal-tempered note at A4 = " + formatReferenceA(referenceAHz) + "."
-        + (transpositionActive ? (" | Transposition: " + transpositionLabelText) : "")
-        + (metronomeActive ? (" | Metronome: " + metronomeSummaryText) : "")
+      return selectedPresetLabel
+        + (transpositionActive ? (" | " + transpositionLabelText) : "")
+        + (metronomeActive ? (" | " + metronomeBpm + " BPM") : "")
+        + " | A4 = " + formatReferenceA(referenceAHz)
     if (metronomeActive)
-      return "Metronome: " + metronomeSummaryText + (transpositionActive ? (" | Transposition: " + transpositionLabelText) : "") + " | Preset: " + selectedPresetLabel + " | A4 = " + formatReferenceA(referenceAHz)
-    return "Preset: " + selectedPresetLabel + (transpositionActive ? (" | Transposition: " + transpositionLabelText) : "") + " | A4 = " + formatReferenceA(referenceAHz)
+      return metronomeBpm + " BPM | " + metronomeMeterLabel + " | " + metronomeSubdivisionLabel
+        + (transpositionActive ? (" | " + transpositionLabelText) : "")
+        + " | " + selectedPresetLabel
+    return selectedPresetLabel + (transpositionActive ? (" | " + transpositionLabelText) : "") + " | A4 = " + formatReferenceA(referenceAHz)
   }
   readonly property string buttonText: {
-    if (helperRecoveryPending) return "..."
+    if (helperRecoveryPending) return "RETRY"
     if (helperState === "error" || runtimeErrorMessage !== "") return "ERR"
     if (helperState === "inactive") return "OFF"
-    if (helperState === "starting") return "..."
-    if (pitchActive) return vertical ? (detectedNoteLabel + (inTune ? "=" : "")) : (detectedNoteLabel + (inTune ? " =" : (" " + formatCompactCents(detectedCents))))
-    if (toneActive) return activeToneSceneKind === "tone" ? activeToneNoteLabel : (vertical ? (activeToneNoteLabel + "+") : (activeToneNoteLabel + " +"))
-    if (metronomeActive) return "M" + metronomeBpm
-    if (signalState === "no_signal") return "SIG"
-    return "ON"
+    if (helperState === "starting") return "START"
+    if (pitchActive) return detectedNoteLabel + barPitchStatusText
+    if (toneActive) return barToneStateText + " " + activeToneNoteLabel
+    if (metronomeActive) return "MET"
+    if (signalState === "no_signal") return "QUIET"
+    return "TUNE"
   }
   readonly property string tooltipText: {
     var lines = ["Omatune"]
 
-    if (helperRecoveryPending) lines.push("state: recovering")
-    else if (helperState === "inactive") lines.push("state: off")
-    else if (helperState === "starting") lines.push("state: starting")
-    else if (helperState === "error") lines.push("state: error")
-    else if (pitchActive) lines.push("state: pitch")
-    else if (signalState === "no_signal") lines.push("state: no signal")
-    else lines.push("state: listening")
+    if (helperRecoveryPending) {
+      lines.push("Recovering audio helper (" + helperRecoveryAttempt + "/" + helperRecoveryMaxAttempts + ")")
+      if (helperRecoveryMessage !== "") lines.push(helperRecoveryMessage)
+      return lines.join("\n")
+    }
 
-    if (pitchActive) lines.push("pitch: " + detectedNoteLabel + "  " + formatSignedCents(detectedCents) + "  " + formatFrequency(detectedFrequencyHz) + " Hz")
-    if (toneActive) lines.push("tone: " + activeToneSceneLabel + (activeToneVoiceSummaryText !== "" ? ("  " + activeToneVoiceSummaryText) : ""))
-    if (metronomeActive) lines.push("metronome: " + metronomeSummaryText)
-    lines.push("preset: " + selectedPresetLabel)
-    lines.push("A4: " + formatReferenceA(referenceAHz))
-    lines.push("transposition: " + transpositionLabelText)
-    lines.push("spelling: " + noteSpelling)
-    if (helperRecoveryPending) lines.push("recovery: attempt " + helperRecoveryAttempt + " of " + helperRecoveryMaxAttempts)
-    if (helperError !== "") lines.push("helper error: " + helperError)
-    if (runtimeErrorMessage !== "") lines.push("runtime error: " + runtimeErrorMessage)
-    if (lastStderrLine !== "") lines.push("stderr: " + lastStderrLine)
-    if (!helperProc.running && lastExitCode !== 0) lines.push("last exit code: " + lastExitCode)
-    lines.push("keys: 1-6 quick notes | ctrl+1-6 favorites | f favorite | left/right note | alt+up/down octave | shift+left/right bpm | d mode | [/] shape | m metro | shift+m tap | ctrl+m meter | alt+m subdiv | p play/stop | x stop | t power | r restart | esc close")
+    if (helperState === "error" || runtimeErrorMessage !== "") {
+      lines.push("Audio error")
+      if (currentErrorSummaryText !== "") lines.push(currentErrorSummaryText)
+      return lines.join("\n")
+    }
 
-    lines.push("left click: open tuner")
-    lines.push("right click: turn tuner on or off")
-    lines.push(toneActive ? "middle click: stop tone" : "middle click: restart helper")
+    if (helperState === "inactive") {
+      lines.push("Tuner off")
+      return lines.join("\n")
+    }
+
+    if (helperState === "starting") {
+      lines.push("Starting audio")
+      return lines.join("\n")
+    }
+
+    if (pitchActive) {
+      lines.push(detectedNoteLabel + "  " + formatSignedCents(detectedCents) + "  " + formatFrequency(detectedFrequencyHz) + " Hz")
+      return lines.join("\n")
+    }
+
+    if (toneActive) {
+      lines.push(activeTonePlaybackTypeText + ": " + activeToneSceneLabel)
+      if (activeToneVoiceSummaryText !== "") lines.push(activeToneVoiceSummaryText)
+      return lines.join("\n")
+    }
+
+    if (metronomeActive) {
+      lines.push("Metronome: " + metronomeBpm + " BPM | " + metronomeMeterLabel + " | " + metronomeSubdivisionLabel)
+      return lines.join("\n")
+    }
+
+    if (signalState === "no_signal") {
+      lines.push("No signal. Play a steady note.")
+      return lines.join("\n")
+    }
+
+    lines.push("Listening for pitch")
     return lines.join("\n")
   }
 
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  implicitWidth: Math.max(button.implicitWidth, buttonSizer.implicitWidth)
+  implicitHeight: Math.max(button.implicitHeight, buttonSizer.implicitHeight)
 
   function localPath(relativePath) {
     return decodeURIComponent(String(Qt.resolvedUrl(relativePath)).replace(/^file:\/\//, ""))
@@ -380,11 +419,6 @@ BarWidget {
   function roundedCents(value) {
     var rounded = Math.round(finiteNumber(value, 0))
     return rounded === 0 ? 0 : rounded
-  }
-
-  function formatCompactCents(value) {
-    var rounded = roundedCents(value)
-    return (rounded > 0 ? "+" : "") + rounded + "c"
   }
 
   function formatSignedCents(value) {
@@ -707,10 +741,6 @@ BarWidget {
     }]
   }
 
-  function normalizePopupLayoutMode(value) {
-    return String(value || "") === "expanded" ? "expanded" : "compact"
-  }
-
   function normalizeBooleanSetting(value, fallback) {
     if (value === true || value === false) return value
 
@@ -980,9 +1010,9 @@ BarWidget {
     var preset = presetById(normalized.presetId)
     var groupLabel = String(preset.groupLabel || "")
     var label = String(preset.label || "")
-    if (groupLabel === "") return label
     if (label === "") return groupLabel
-    return groupLabel + " " + label
+    if (label === "Standard" && groupLabel !== "") return groupLabel
+    return label
   }
 
   function quickSwitchSceneLabel(scene) {
@@ -999,20 +1029,29 @@ BarWidget {
     var defaultMeterLabel = metronomeMeterPresetByValues(defaultMetronomeBeatsPerBar, defaultMetronomeBeatUnit).label
     var meterLabel = metronomeMeterPresetByValues(normalized.metronomeBeatsPerBar, normalized.metronomeBeatUnit).label
     var subdivisionLabel = metronomeSubdivisionPresets[indexOfMetronomeSubdivisionPreset(normalized.metronomeSubdivision)].label
-    var parts = []
+    var primaryParts = []
+    var detailParts = []
     var presetText = quickSwitchPresetSummary(normalized)
     var referenceText = quickSwitchSceneLabel(normalized)
+    var transpositionPreset = transpositionPresetBySemitones(normalized.transpositionSemitones)
 
-    if (presetText !== "") parts.push(presetText)
-    if (referenceText !== "") parts.push(referenceText)
-    if (normalized.transpositionSemitones !== 0) parts.push(formatTranspositionLabel(normalized.transpositionSemitones))
-    parts.push(normalized.metronomeBpm + " BPM")
+    if (presetText !== "") primaryParts.push(presetText)
+    if (referenceText !== "") primaryParts.push(referenceText)
+    if (normalized.transpositionSemitones !== 0) {
+      if (transpositionPreset && String(transpositionPreset.label || "") !== "")
+        detailParts.push(String(transpositionPreset.label || ""))
+      else detailParts.push(formatSignedSemitoneOffset(normalized.transpositionSemitones))
+    }
+    detailParts.push("M" + normalized.metronomeBpm)
     if (meterLabel !== defaultMeterLabel || normalized.metronomeSubdivision !== defaultMetronomeSubdivision)
-      parts.push(meterLabel)
+      detailParts.push(meterLabel)
     if (normalized.metronomeSubdivision !== defaultMetronomeSubdivision)
-      parts.push(subdivisionLabel)
+      detailParts.push(subdivisionLabel)
 
-    return parts.join(" | ")
+    var primaryText = primaryParts.join(": ")
+    if (primaryText === "") return detailParts.join(" ")
+    if (detailParts.length === 0) return primaryText
+    return primaryText + " | " + detailParts.join(" ")
   }
 
   function rememberCurrentQuickSwitch() {
@@ -1099,7 +1138,6 @@ BarWidget {
       metronomeBeatsPerBar: metronomePreset.beatsPerBar,
       metronomeBeatUnit: metronomePreset.beatUnit,
       metronomeSubdivision: normalizeMetronomeSubdivision(source.metronomeSubdivision),
-      popupLayoutMode: normalizePopupLayoutMode(source.popupLayoutMode),
       highContrastMode: normalizeBooleanSetting(source.highContrastMode, false),
       reducedMotionMode: normalizeBooleanSetting(source.reducedMotionMode, false),
       favoriteQuickSwitches: filteredQuickSwitchSceneList(source.favoriteQuickSwitches, null, maximumFavoriteQuickSwitches),
@@ -1118,7 +1156,6 @@ BarWidget {
       metronomeBeatsPerBar: metronomeBeatsPerBar,
       metronomeBeatUnit: metronomeBeatUnit,
       metronomeSubdivision: metronomeSubdivision,
-      popupLayoutMode: popupLayoutMode,
       highContrastMode: highContrastMode,
       reducedMotionMode: reducedMotionMode,
       favoriteQuickSwitches: favoriteQuickSwitches,
@@ -1162,7 +1199,6 @@ BarWidget {
     metronomeBeatsPerBar = settings.metronomeBeatsPerBar
     metronomeBeatUnit = settings.metronomeBeatUnit
     metronomeSubdivision = settings.metronomeSubdivision
-    popupLayoutMode = settings.popupLayoutMode
     highContrastMode = settings.highContrastMode
     reducedMotionMode = settings.reducedMotionMode
     favoriteQuickSwitches = settings.favoriteQuickSwitches
@@ -1247,7 +1283,7 @@ BarWidget {
     var settings = currentNormalizedSettingsObject()
 
     for (var key in existingSettings)
-      if (key !== "id") entry[key] = existingSettings[key]
+      if (key !== "id" && key !== "popupLayoutMode") entry[key] = existingSettings[key]
 
     for (var settingsKey in settings)
       entry[settingsKey] = settings[settingsKey]
@@ -1414,18 +1450,6 @@ BarWidget {
 
     noteSpelling = next
     persistWidgetSettings()
-  }
-
-  function setPopupLayoutMode(value) {
-    var next = normalizePopupLayoutMode(value)
-    if (next === popupLayoutMode) return
-
-    popupLayoutMode = next
-    persistWidgetSettings()
-  }
-
-  function togglePopupLayoutMode() {
-    setPopupLayoutMode(popupExpanded ? "compact" : "expanded")
   }
 
   function setReferencePlaybackMode(value) {
@@ -2130,6 +2154,15 @@ BarWidget {
       root.injectPopup()
       Qt.callLater(root.injectPopup)
     }
+  }
+
+  WidgetButton {
+    id: buttonSizer
+    visible: false
+    enabled: false
+    bar: root.bar
+    text: root.barMeasureText
+    horizontalMargin: button.horizontalMargin
   }
 
   WidgetButton {
