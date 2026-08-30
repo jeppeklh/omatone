@@ -28,8 +28,12 @@ subdivisions, and a beat-one accent.
     migration rules
 -   `docs/omarchy-plugin-model.md`: confirmed Omarchy/Quickshell plugin
     facts and local validation workflow
+-   `docs/preset-packs.md`: shareable preset-pack schema and
+    normalization rules
 -   `docs/protocol.md`: NDJSON contract between the Rust helper and the
     QML UI
+-   `docs/temperament-packs.md`: shareable temperament-pack schema and
+    normalization rules
 -   `docs/v0.1-implementation.md`: ordered implementation phases for the
     v0.1 milestone
 -   `docs/v1.0-implementation.md`: required core phases and optional
@@ -62,6 +66,8 @@ subdivisions, and a beat-one accent.
 -   Adjustable A4 reference frequency in the supported calibration range
 -   Optional semitone transposition across detected note labels and
     reference-tone targeting
+-   Built-in equal, pythagorean, and meantone temperament choices with
+    A-anchored offset handling
 -   Stable-width bar feedback with compact state labels and concise hover
     summaries
 -   Popup destinations for `Tune`, `Reference`, `Metronome`, `Presets`,
@@ -74,7 +80,10 @@ subdivisions, and a beat-one accent.
     over the current preset, reference scene, and metronome setup
 -   Human-readable copy/paste import/export of the supported JSON
     configuration schema
--   Built-in guitar, bass, ukulele, and violin-family tuning presets
+-   Dedicated preset-pack and temperament-pack import/export surface in
+    `Advanced`
+-   Built-in guitar, bass, ukulele, violin-family, mandolin-family,
+    banjo, tenor-guitar, and extended-range string presets
 -   Sensible behavior for silence, weak input, invalid pitch estimates,
     and audio errors
 -   Bounded automatic recovery after unexpected helper exit and
@@ -119,9 +128,18 @@ Supported flags:
     `400.0..=480.0` Hz
 -   `--transposition-semitones <n>`: startup note transposition within
     `-12..=12` semitones
+-   `--temperament-offsets-cents <csv>`: startup temperament offsets as
+    twelve comma-separated cents values in pitch-class order
 -   `-h`, `--help`: print usage and exit without starting audio
 -   `-V`, `--version`: print the helper version and exit without starting
     audio
+
+Documented helper tool modes:
+
+-   `--dump-tuning-library`: print the built-in temperament and preset
+    library as JSON and exit
+-   `--normalize-content-pack <json>`: validate and normalize one preset
+    or temperament pack JSON object and exit
 
 `scripts/run-helper.sh` resolves the helper in this order:
 

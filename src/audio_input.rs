@@ -232,7 +232,7 @@ fn input_mock_worker_loop(
         }
         MockInputMode::Pitch(note) => {
             let tuning_model = shared_config.tuning_model();
-            let Ok(frequency_hz) = note.frequency_hz(tuning_model.reference_a_hz()) else {
+            let Ok(frequency_hz) = tuning_model.frequency_hz_for_sounding_note(note) else {
                 emit_runtime_error(
                     &protocol_writer,
                     ErrorCode::InternalError,

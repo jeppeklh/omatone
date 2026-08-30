@@ -25,11 +25,12 @@ For a bar widget instance, the entry shape is:
 ```json
 {
   "id": "jeppeklh.omatune",
-  "configVersion": 1,
+  "configVersion": 2,
   "referenceAHz": 440.0,
   "transpositionSemitones": 0,
   "noteSpelling": "sharps",
   "selectedPresetId": "guitar.standard",
+  "selectedTemperamentId": "equal.12tet",
   "selectedReferenceNote": "A4",
   "metronomeBpm": 100,
   "metronomeBeatsPerBar": 4,
@@ -38,7 +39,9 @@ For a bar widget instance, the entry shape is:
   "highContrastMode": false,
   "reducedMotionMode": false,
   "favoriteQuickSwitches": [],
-  "recentQuickSwitches": []
+  "recentQuickSwitches": [],
+  "importedTemperamentPacks": [],
+  "importedPresetPacks": []
 }
 ```
 
@@ -48,12 +51,13 @@ settings file.
 
 ## Supported Fields
 
--   `configVersion`: integer schema version. Current value: `1`.
+-   `configVersion`: integer schema version. Current value: `2`.
 -   `referenceAHz`: reference A frequency in Hz.
 -   `transpositionSemitones`: integer semitone offset from sounding pitch
     to displayed/selected note names.
 -   `noteSpelling`: `"sharps"` or `"flats"`.
--   `selectedPresetId`: built-in tuning preset identifier.
+-   `selectedPresetId`: currently selected tuning preset identifier.
+-   `selectedTemperamentId`: currently selected temperament identifier.
 -   `selectedReferenceNote`: last selected chromatic reference note.
 -   `metronomeBpm`: last selected whole-number metronome tempo.
 -   `metronomeBeatsPerBar`: last selected metronome meter numerator.
@@ -63,6 +67,9 @@ settings file.
 -   `reducedMotionMode`: boolean display-preference flag.
 -   `favoriteQuickSwitches`: bounded list of saved workflow snapshots.
 -   `recentQuickSwitches`: bounded list of recent workflow snapshots.
+-   `importedTemperamentPacks`: locally installed normalized temperament
+    packs.
+-   `importedPresetPacks`: locally installed normalized preset packs.
 
 Unknown keys are preserved when Omatune rewrites its settings entry,
 except for the legacy `popupLayoutMode` key which is removed on the
@@ -70,19 +77,21 @@ next write.
 
 ## Human-Readable Import/Export
 
-Omatune's `Advanced` popup destination exposes a copy/paste
-configuration editor for the stable settings schema.
+Omatune's `Advanced` popup destination exposes two copy/paste surfaces:
 
-The exported document is pretty-printed JSON containing only the
+-   a configuration editor for the stable settings schema;
+-   a content-pack editor for preset packs and temperament packs.
+
+The configuration export is pretty-printed JSON containing only the
 supported fields listed above, in a stable order. It intentionally omits
 the widget `id` and any unrelated host-side keys from the surrounding
 `shell.json` entry.
 
-Import accepts that same JSON object. It also tolerates a pasted widget
-entry copied directly from `shell.json`; any `id` or other unknown keys
-are ignored by the transfer layer. Missing or invalid supported fields
-normalize with the same defaults and validation rules used for persisted
-settings.
+Configuration import accepts that same JSON object. It also tolerates a
+pasted widget entry copied directly from `shell.json`; any `id` or other
+unknown keys are ignored by the transfer layer. Missing or invalid
+supported fields normalize with the same defaults and validation rules
+used for persisted settings.
 
 If the imported document contains a numeric `configVersion` newer than
 the current build supports, Omatune rejects the import rather than
@@ -92,15 +101,24 @@ Import rewrites the active widget settings through the normal
 persistence path, so existing unknown keys already present in the local
 widget entry remain preserved on the next write.
 
+Pack import and export are separate from the configuration editor.
+
+-   `Load preset pack` exports the currently selected preset pack.
+-   `Load temperament pack` exports the currently selected temperament
+    pack.
+-   `Apply pack import` validates one pasted preset or temperament pack
+    through the Rust helper's normalization mode before persisting it.
+
 ## Defaults
 
 When no persisted configuration exists, Omatune uses:
 
--   `configVersion = 1`
+-   `configVersion = 2`
 -   `referenceAHz = 440.0`
 -   `transpositionSemitones = 0`
 -   `noteSpelling = "sharps"`
 -   `selectedPresetId = "guitar.standard"`
+-   `selectedTemperamentId = "equal.12tet"`
 -   `selectedReferenceNote = "A4"`
 -   `metronomeBpm = 100`
 -   `metronomeBeatsPerBar = 4`
@@ -110,6 +128,8 @@ When no persisted configuration exists, Omatune uses:
 -   `reducedMotionMode = false`
 -   `favoriteQuickSwitches = []`
 -   `recentQuickSwitches = []`
+-   `importedTemperamentPacks = []`
+-   `importedPresetPacks = []`
 
 The helper does not persist live runtime state such as whether the tuner
 is currently on or whether a tone or metronome is actively playing.
@@ -125,8 +145,13 @@ is currently on or whether a tone or metronome is actively playing.
 -   `sharps`
 -   `flats`
 
-`selectedPresetId` must match a built-in preset shipped by the current
-plugin build.
+`selectedPresetId` stores a normalized preset id. When the merged
+built-in plus imported library is available, unresolved ids fall back to
+the built-in default `guitar.standard`.
+
+`selectedTemperamentId` stores a normalized temperament id. When the
+merged built-in plus imported library is available, unresolved ids fall
+back to the built-in default `equal.12tet`.
 
 `selectedReferenceNote` must parse as a supported chromatic note in the
 range `C0` through `B8` after canonicalization.
@@ -148,9 +173,14 @@ the supported metronome presets:
 `favoriteQuickSwitches` and `recentQuickSwitches` must be arrays of at
 most six normalized workflow snapshots.
 
+`importedTemperamentPacks` and `importedPresetPacks` must be arrays of
+normalized pack objects accepted by the schemas in
+`docs/temperament-packs.md` and `docs/preset-packs.md`.
+
 Each workflow snapshot stores:
 
 -   `presetId`
+-   `temperamentId`
 -   `referenceNote`
 -   `transpositionSemitones`
 -   `playbackMode`
@@ -169,8 +199,8 @@ Within those snapshots:
 -   `intervalSemitones` must resolve to one of the built-in drone
     interval presets.
 -   `chordId` must resolve to one of the built-in chord presets.
--   `presetId`, `referenceNote`, and metronome fields use the same
-    validation rules as their top-level equivalents.
+-   `presetId`, `temperamentId`, `referenceNote`, and metronome fields
+    use the same validation rules as their top-level equivalents.
 
 Those snapshot fields are validated with the rules above plus the
 snapshot-specific playback-mode, interval, and chord constraints here.
@@ -198,10 +228,22 @@ The persisted `transpositionSemitones` value is applied in two places:
     command, so live transposition changes update pitch interpretation
     and any active reference tone labels together.
 
+The persisted `selectedTemperamentId` value is applied through the
+helper-owned temperament model:
+
+-   helper startup, via `--temperament-offsets-cents <csv>`, so the first
+    pitch estimate and first reference tone use the selected
+    temperament;
+-   helper runtime, via the additive `set_temperament` protocol command,
+    so live temperament changes retune pitch interpretation and any
+    active reference tone together.
+
 Preset selection, saved quick-switch workflow snapshots, note-spelling
 preference, metronome BPM, meter, subdivision, and display
-accessibility preferences remain UI-owned state. Reference A and
-transposition feed the helper-owned pitch model without forking the
+accessibility preferences remain UI-owned state. Imported preset packs
+and temperament packs are persisted by the UI, but their validation and
+normalization are Rust-owned. Reference A, transposition, and the active
+temperament feed one helper-owned pitch model without forking the
 underlying chromatic tuner into instrument-specific engines.
 
 ## Migration Rules
@@ -227,6 +269,18 @@ arrays.
 
 The later transposition field is additive under that same schema
 version: missing `transpositionSemitones` simply loads as `0`.
+
+### From v1.x configuration version 1
+
+Phase 1 of `v2.0` bumps the exported configuration schema to `2` to add
+temperament and content-pack state.
+
+Migration behavior from `configVersion = 1` is additive:
+
+-   missing `selectedTemperamentId` loads as `equal.12tet`;
+-   missing `importedTemperamentPacks` loads as `[]`;
+-   missing `importedPresetPacks` loads as `[]`;
+-   older preset and quick-switch fields keep their existing meaning.
 
 The removed `popupLayoutMode` field from pre-`v1.5` cleanup builds is
 tolerated on load and import, ignored by the runtime UI, and omitted on

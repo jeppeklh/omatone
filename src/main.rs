@@ -7,6 +7,7 @@ use omatune::config::{
 use omatune::note::{MAX_TRANSPOSITION_SEMITONES, MIN_TRANSPOSITION_SEMITONES};
 use omatune::protocol::{parse_command, Command, ErrorCode, UiMessage};
 use omatune::protocol_io::ProtocolWriter;
+use omatune::tuning_library::{built_in_tuning_library, normalize_content_pack_json};
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
@@ -22,6 +23,24 @@ fn main() -> ExitCode {
 
 fn run() -> io::Result<()> {
     match parse_helper_cli(std::env::args()) {
+        Ok(HelperCliAction::DumpTuningLibrary) => {
+            println!(
+                "{}",
+                serde_json::to_string(&built_in_tuning_library())
+                    .map_err(|error| io::Error::other(error.to_string()))?
+            );
+            Ok(())
+        }
+        Ok(HelperCliAction::NormalizeContentPack { json }) => {
+            let normalized_pack = normalize_content_pack_json(&json)
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            println!(
+                "{}",
+                serde_json::to_string(&normalized_pack)
+                    .map_err(|error| io::Error::other(error.to_string()))?
+            );
+            Ok(())
+        }
         Ok(HelperCliAction::PrintHelp) => {
             print_help();
             return Ok(());
@@ -32,6 +51,9 @@ fn run() -> io::Result<()> {
         }
         Ok(HelperCliAction::Run(startup_config)) => run_helper(startup_config),
         Err(error) => {
+            if error.is_tool_mode_error() {
+                return Err(io::Error::other(error.to_string()));
+            }
             let protocol_writer = ProtocolWriter::new();
             Err(emit_startup_protocol_error(&protocol_writer, error))
         }
@@ -69,7 +91,7 @@ fn run_helper(startup_config: StartupConfig) -> io::Result<()> {
 
 fn print_help() {
     println!(
-        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--help] [--version]\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within {MIN_REFERENCE_A_HZ:.1}..={MAX_REFERENCE_A_HZ:.1} Hz\n  --transposition-semitones <n>  Set startup transposition within {MIN_TRANSPOSITION_SEMITONES}..={MAX_TRANSPOSITION_SEMITONES} semitones\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit"
+        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--temperament-offsets-cents <csv>] [--help] [--version]\n       omatune-helper --dump-tuning-library\n       omatune-helper --normalize-content-pack <json>\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within {MIN_REFERENCE_A_HZ:.1}..={MAX_REFERENCE_A_HZ:.1} Hz\n  --transposition-semitones <n>  Set startup transposition within {MIN_TRANSPOSITION_SEMITONES}..={MAX_TRANSPOSITION_SEMITONES} semitones\n  --temperament-offsets-cents    Set startup pitch-class offsets as 12 comma-separated cents values\n  --dump-tuning-library          Print the built-in temperament and preset library as JSON and exit\n  --normalize-content-pack <json>  Normalize one preset or temperament pack JSON object and exit\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit"
     );
 }
 
@@ -149,6 +171,22 @@ fn handle_command(
                 Err(error) => emit_control_error(protocol_writer, error)?,
             }
         }
+        Command::SetTemperament { temperament } => {
+            shared_config.set_temperament(temperament);
+
+            match audio_output.refresh_tuning() {
+                Ok(Some(active_tone)) => {
+                    protocol_writer.write_message(&UiMessage::ToneStarted {
+                        note: active_tone.note,
+                        frequency_hz: active_tone.frequency_hz,
+                        intervals_semitones: active_tone.intervals_semitones,
+                        voices: active_tone.voices,
+                    })?
+                }
+                Ok(None) => {}
+                Err(error) => emit_control_error(protocol_writer, error)?,
+            }
+        }
         Command::StopTone => match audio_output.stop() {
             Ok(()) => protocol_writer.write_message(&UiMessage::ToneStopped)?,
             Err(error) => emit_control_error(protocol_writer, error)?,
@@ -205,7 +243,11 @@ fn emit_startup_protocol_error(
             ErrorCode::InvalidReferenceFrequency
         }
         StartupConfigError::InvalidTransposition(_) => ErrorCode::InvalidTransposition,
+        StartupConfigError::InvalidTemperament(_) => ErrorCode::InvalidTemperament,
         StartupConfigError::UnexpectedArgument(_) => ErrorCode::InvalidCommand,
+        StartupConfigError::ToolMissingValue(_) | StartupConfigError::ToolUnexpectedArgument(_) => {
+            ErrorCode::InvalidCommand
+        }
     };
 
     emit_startup_error_message(protocol_writer, code, error.to_string())

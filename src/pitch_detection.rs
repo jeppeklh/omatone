@@ -56,6 +56,7 @@ pub struct PitchDetector {
     previous_level_rms: f64,
     last_reference_a_hz: Option<f64>,
     last_transposition_semitones: Option<i32>,
+    last_temperament: Option<crate::note::Temperament>,
 }
 
 impl PitchDetector {
@@ -93,6 +94,7 @@ impl PitchDetector {
             previous_level_rms: 0.0,
             last_reference_a_hz: None,
             last_transposition_semitones: None,
+            last_temperament: None,
         }
     }
 
@@ -278,9 +280,15 @@ impl PitchDetector {
                 self.clear_tracking();
             }
         }
+        if let Some(last_temperament) = self.last_temperament {
+            if last_temperament != tuning_model.temperament() {
+                self.clear_tracking();
+            }
+        }
 
         self.last_reference_a_hz = Some(tuning_model.reference_a_hz());
         self.last_transposition_semitones = Some(tuning_model.transposition_semitones());
+        self.last_temperament = Some(tuning_model.temperament());
     }
 
     fn is_silent(&self, level_rms: f64) -> bool {

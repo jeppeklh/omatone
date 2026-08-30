@@ -8,3 +8,4 @@ pub mod protocol;
 pub mod protocol_io;
 pub mod reference_tone;
 mod shared_audio;
+pub mod tuning_library;

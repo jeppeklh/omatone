@@ -1,3 +1,5 @@
+use omatune::note::{Note, Temperament, DEFAULT_REFERENCE_A_HZ};
+use omatune::protocol::UiMessage;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
@@ -180,7 +182,7 @@ fn helper_cli_help_is_stable() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--help] [--version]\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within 400.0..=480.0 Hz\n  --transposition-semitones <n>  Set startup transposition within -12..=12 semitones\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit\n"
+        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--temperament-offsets-cents <csv>] [--help] [--version]\n       omatune-helper --dump-tuning-library\n       omatune-helper --normalize-content-pack <json>\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within 400.0..=480.0 Hz\n  --transposition-semitones <n>  Set startup transposition within -12..=12 semitones\n  --temperament-offsets-cents    Set startup pitch-class offsets as 12 comma-separated cents values\n  --dump-tuning-library          Print the built-in temperament and preset library as JSON and exit\n  --normalize-content-pack <json>  Normalize one preset or temperament pack JSON object and exit\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit\n"
     );
     assert_eq!(String::from_utf8(output.stderr).unwrap(), "");
 }
@@ -414,7 +416,7 @@ fn runtime_output_failure_is_reported_without_crashing_helper() {
 #[test]
 fn invalid_commands_do_not_crash_or_block_later_valid_commands() {
     let output = run_helper_with_input(
-        "[]\n{\"type\":1}\n{\"type\":\"play_tone\",\"note\":\"H2\"}\n{\"type\":\"set_reference_a\",\"frequency_hz\":399.0}\n{\"type\":\"set_transposition\",\"semitones\":13}\n{\"type\":\"start_metronome\",\"bpm\":301}\n{\"type\":\"start_metronome\",\"bpm\":120,\"beats_per_bar\":5,\"beat_unit\":4}\n{\"type\":\"start_metronome\",\"bpm\":120,\"subdivision\":5}\n{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"stop_tone\"}\n",
+        "[]\n{\"type\":1}\n{\"type\":\"play_tone\",\"note\":\"H2\"}\n{\"type\":\"set_reference_a\",\"frequency_hz\":399.0}\n{\"type\":\"set_transposition\",\"semitones\":13}\n{\"type\":\"set_temperament\",\"offsets_cents\":[0,0,0]}\n{\"type\":\"start_metronome\",\"bpm\":301}\n{\"type\":\"start_metronome\",\"bpm\":120,\"beats_per_bar\":5,\"beat_unit\":4}\n{\"type\":\"start_metronome\",\"bpm\":120,\"subdivision\":5}\n{\"type\":\"play_tone\",\"note\":\"A4\"}\n{\"type\":\"stop_tone\"}\n",
         Some("idle"),
         Some("ok"),
         &[],
@@ -431,6 +433,7 @@ fn invalid_commands_do_not_crash_or_block_later_valid_commands() {
             r#"{"type":"error","code":"invalid_note","message":"invalid note: invalid note letter 'H'"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_reference_frequency","message":"invalid reference A frequency: reference A frequency must be within 400.0..=480.0 Hz"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_transposition","message":"invalid transposition: transposition must be within -12..=12 semitones"}"#.to_owned(),
+            r#"{"type":"error","code":"invalid_temperament","message":"invalid temperament: temperament offsets must contain exactly 12 pitch classes"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_metronome_bpm","message":"invalid metronome BPM: metronome BPM must be within 20..=300"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_metronome_meter","message":"invalid metronome meter: supported metronome meters are 2/4, 3/4, 4/4, and 6/8"}"#.to_owned(),
             r#"{"type":"error","code":"invalid_metronome_subdivision","message":"invalid metronome subdivision: metronome subdivision must be within 1..=4"}"#.to_owned(),
@@ -581,6 +584,94 @@ fn runtime_transposition_update_relabels_active_interval_scene_without_changing_
             r#"{"type":"ready"}"#.to_owned(),
             r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}"#.to_owned(),
             r#"{"type":"tone_started","note":"B4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"B4","frequency_hz":440.0},{"note":"B5","frequency_hz":880.0}]}"#.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn startup_temperament_argument_calibrates_initial_pitch_and_tone() {
+    let temperament = Temperament::from_offset_slice(&[
+        10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    ])
+    .unwrap();
+    let c4 = "C4".parse::<Note>().unwrap();
+    let c4_frequency_hz = temperament
+        .frequency_hz_for_note(c4, DEFAULT_REFERENCE_A_HZ)
+        .unwrap();
+    let expected_pitch = UiMessage::Pitch {
+        note: c4,
+        frequency_hz: c4_frequency_hz,
+        cents: 0.0,
+        confidence: Some(1.0),
+    }
+    .to_json_line()
+    .unwrap();
+    let expected_tone = UiMessage::ToneStarted {
+        note: c4,
+        frequency_hz: c4_frequency_hz,
+        intervals_semitones: Vec::new(),
+        voices: Vec::new(),
+    }
+    .to_json_line()
+    .unwrap();
+
+    let output = run_helper_until_stdout_lines(
+        "{\"type\":\"play_tone\",\"note\":\"C4\"}\n",
+        3,
+        Some("pitch:C4"),
+        Some("ok"),
+        &["--temperament-offsets-cents", "10,0,0,0,0,0,0,0,0,0,0,0"],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(lines[0], r#"{"type":"ready"}"#);
+    assert_eq!(lines.len(), 3);
+    assert!(lines[1..].contains(&expected_pitch));
+    assert!(lines[1..].contains(&expected_tone));
+}
+
+#[test]
+fn runtime_temperament_update_restarts_active_tone_with_tempered_frequency() {
+    let c4 = "C4".parse::<Note>().unwrap();
+    let equal_c4_frequency_hz = c4.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap();
+    let temperament = Temperament::from_offset_slice(&[
+        10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    ])
+    .unwrap();
+    let tempered_c4_frequency_hz = temperament
+        .frequency_hz_for_note(c4, DEFAULT_REFERENCE_A_HZ)
+        .unwrap();
+
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"C4\"}\n{\"type\":\"set_temperament\",\"offsets_cents\":[10,0,0,0,0,0,0,0,0,0,0,0]}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            UiMessage::ToneStarted {
+                note: c4,
+                frequency_hz: equal_c4_frequency_hz,
+                intervals_semitones: Vec::new(),
+                voices: Vec::new(),
+            }
+            .to_json_line()
+            .unwrap(),
+            UiMessage::ToneStarted {
+                note: c4,
+                frequency_hz: tempered_c4_frequency_hz,
+                intervals_semitones: Vec::new(),
+                voices: Vec::new(),
+            }
+            .to_json_line()
+            .unwrap(),
         ]
     );
 }

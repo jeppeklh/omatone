@@ -9,11 +9,14 @@ pub const MIN_OCTAVE: i32 = 0;
 pub const MAX_OCTAVE: i32 = 8;
 pub const MIN_TRANSPOSITION_SEMITONES: i32 = -12;
 pub const MAX_TRANSPOSITION_SEMITONES: i32 = 12;
+pub const PITCH_CLASSES_PER_OCTAVE: usize = 12;
+pub const MAX_TEMPERAMENT_OFFSET_CENTS: f64 = 100.0;
 
-const SEMITONES_PER_OCTAVE: i32 = 12;
+const SEMITONES_PER_OCTAVE: i32 = PITCH_CLASSES_PER_OCTAVE as i32;
 const A4_MIDI_NUMBER: i32 = 69;
 const MIN_MIDI_NUMBER: i32 = 12;
 const MAX_MIDI_NUMBER: i32 = 119;
+const A_PITCH_CLASS_INDEX: usize = 9;
 const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
@@ -34,6 +37,7 @@ pub struct NearestNote {
 pub struct TuningModel {
     reference_a_hz: f64,
     transposition_semitones: i32,
+    temperament: Temperament,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +50,18 @@ pub enum PitchMathError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TranspositionError {
     OutOfRange,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Temperament {
+    offsets_cents: [f64; PITCH_CLASSES_PER_OCTAVE],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TemperamentError {
+    InvalidOffsetCount,
+    InvalidOffsetValue,
+    OffsetOutOfRange,
 }
 
 impl fmt::Display for PitchMathError {
@@ -81,6 +97,26 @@ impl fmt::Display for TranspositionError {
 }
 
 impl Error for TranspositionError {}
+
+impl fmt::Display for TemperamentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TemperamentError::InvalidOffsetCount => write!(
+                f,
+                "temperament offsets must contain exactly {PITCH_CLASSES_PER_OCTAVE} pitch classes"
+            ),
+            TemperamentError::InvalidOffsetValue => {
+                write!(f, "temperament offsets must be finite numeric values")
+            }
+            TemperamentError::OffsetOutOfRange => write!(
+                f,
+                "temperament offsets must remain within +/-{MAX_TEMPERAMENT_OFFSET_CENTS:.1} cents"
+            ),
+        }
+    }
+}
+
+impl Error for TemperamentError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NoteParseError {
@@ -226,9 +262,22 @@ impl TuningModel {
         reference_a_hz: f64,
         transposition_semitones: i32,
     ) -> Result<Self, TranspositionError> {
+        Self::with_temperament(
+            reference_a_hz,
+            transposition_semitones,
+            Temperament::equal(),
+        )
+    }
+
+    pub fn with_temperament(
+        reference_a_hz: f64,
+        transposition_semitones: i32,
+        temperament: Temperament,
+    ) -> Result<Self, TranspositionError> {
         Ok(Self {
             reference_a_hz,
             transposition_semitones: validate_transposition_semitones(transposition_semitones)?,
+            temperament,
         })
     }
 
@@ -238,6 +287,10 @@ impl TuningModel {
 
     pub fn transposition_semitones(self) -> i32 {
         self.transposition_semitones
+    }
+
+    pub fn temperament(self) -> Temperament {
+        self.temperament
     }
 
     pub fn sounding_note_for_displayed_note(
@@ -258,22 +311,22 @@ impl TuningModel {
         self,
         sounding_note: Note,
     ) -> Result<f64, PitchMathError> {
-        sounding_note.frequency_hz(self.reference_a_hz)
+        self.temperament
+            .frequency_hz_for_note(sounding_note, self.reference_a_hz)
     }
 
     pub fn frequency_hz_for_displayed_note(
         self,
         displayed_note: Note,
     ) -> Result<f64, PitchMathError> {
-        self.sounding_note_for_displayed_note(displayed_note)?
-            .frequency_hz(self.reference_a_hz)
+        self.frequency_hz_for_sounding_note(self.sounding_note_for_displayed_note(displayed_note)?)
     }
 
     pub fn nearest_displayed_note_for_frequency(
         self,
         frequency_hz: f64,
     ) -> Result<NearestNote, PitchMathError> {
-        let nearest_sounding = nearest_note_for_frequency(frequency_hz, self.reference_a_hz)?;
+        let nearest_sounding = self.nearest_sounding_note_for_frequency(frequency_hz)?;
         let displayed_note = self.displayed_note_for_sounding_note(nearest_sounding.note)?;
         let reference_frequency_hz = self.frequency_hz_for_displayed_note(displayed_note)?;
         let cents = cents_between(frequency_hz, reference_frequency_hz)?;
@@ -283,6 +336,100 @@ impl TuningModel {
             reference_frequency_hz,
             cents,
         })
+    }
+
+    fn nearest_sounding_note_for_frequency(
+        self,
+        frequency_hz: f64,
+    ) -> Result<NearestNote, PitchMathError> {
+        if !is_positive_finite(frequency_hz) {
+            return Err(PitchMathError::InvalidFrequency);
+        }
+        if !is_positive_finite(self.reference_a_hz) {
+            return Err(PitchMathError::InvalidReferenceFrequency);
+        }
+
+        let mut nearest: Option<NearestNote> = None;
+
+        for midi_number in MIN_MIDI_NUMBER..=MAX_MIDI_NUMBER {
+            let note = Note::from_midi_number(midi_number)
+                .expect("supported MIDI range should always resolve to a note");
+            let reference_frequency_hz = self.frequency_hz_for_sounding_note(note)?;
+            let cents = cents_between(frequency_hz, reference_frequency_hz)?;
+
+            let should_replace = nearest
+                .as_ref()
+                .map(|current| cents.abs() < current.cents.abs())
+                .unwrap_or(true);
+            if should_replace {
+                nearest = Some(NearestNote {
+                    note,
+                    reference_frequency_hz,
+                    cents,
+                });
+            }
+        }
+
+        nearest.ok_or(PitchMathError::OutOfSupportedRange)
+    }
+}
+
+impl Temperament {
+    pub const fn equal() -> Self {
+        Self {
+            offsets_cents: [0.0; PITCH_CLASSES_PER_OCTAVE],
+        }
+    }
+
+    pub fn from_offset_slice(offsets_cents: &[f64]) -> Result<Self, TemperamentError> {
+        if offsets_cents.len() != PITCH_CLASSES_PER_OCTAVE {
+            return Err(TemperamentError::InvalidOffsetCount);
+        }
+
+        let mut copied_offsets = [0.0; PITCH_CLASSES_PER_OCTAVE];
+        copied_offsets.copy_from_slice(offsets_cents);
+        Self::from_offsets_cents(copied_offsets)
+    }
+
+    pub fn from_offsets_cents(
+        mut offsets_cents: [f64; PITCH_CLASSES_PER_OCTAVE],
+    ) -> Result<Self, TemperamentError> {
+        if offsets_cents
+            .iter()
+            .any(|offset_cents| !offset_cents.is_finite())
+        {
+            return Err(TemperamentError::InvalidOffsetValue);
+        }
+        if offsets_cents
+            .iter()
+            .any(|offset_cents| offset_cents.abs() > MAX_TEMPERAMENT_OFFSET_CENTS)
+        {
+            return Err(TemperamentError::OffsetOutOfRange);
+        }
+
+        let a_offset_cents = offsets_cents[A_PITCH_CLASS_INDEX];
+        for offset_cents in &mut offsets_cents {
+            *offset_cents = round_cents(*offset_cents - a_offset_cents);
+        }
+
+        Ok(Self { offsets_cents })
+    }
+
+    pub fn offsets_cents(self) -> [f64; PITCH_CLASSES_PER_OCTAVE] {
+        self.offsets_cents
+    }
+
+    pub fn frequency_hz_for_note(
+        self,
+        note: Note,
+        reference_a_hz: f64,
+    ) -> Result<f64, PitchMathError> {
+        let base_frequency_hz = note.frequency_hz(reference_a_hz)?;
+        Ok(base_frequency_hz * 2.0_f64.powf(self.offset_cents_for_note(note) / 1200.0))
+    }
+
+    pub fn offset_cents_for_note(self, note: Note) -> f64 {
+        self.offsets_cents[note.midi_number.rem_euclid(SEMITONES_PER_OCTAVE) as usize]
     }
 }
 
@@ -340,11 +487,21 @@ fn is_positive_finite(value: f64) -> bool {
     value.is_finite() && value > 0.0
 }
 
+fn round_cents(value: f64) -> f64 {
+    let rounded = (value * 10_000.0).round() / 10_000.0;
+    if rounded.abs() <= f64::EPSILON {
+        0.0
+    } else {
+        rounded
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         cents_between, nearest_note_for_frequency, validate_transposition_semitones, Note,
-        NoteParseError, PitchMathError, TranspositionError, TuningModel, DEFAULT_REFERENCE_A_HZ,
+        NoteParseError, PitchMathError, Temperament, TemperamentError, TranspositionError,
+        TuningModel, DEFAULT_REFERENCE_A_HZ,
     };
 
     fn assert_close(actual: f64, expected: f64, tolerance: f64) {
@@ -560,6 +717,65 @@ mod tests {
             0.0001,
         );
         assert_close(nearest.cents, 0.0, 0.0001);
+    }
+
+    #[test]
+    fn temperament_offsets_are_a_anchored_and_applied_to_frequency_math() {
+        let temperament = Temperament::from_offsets_cents([
+            2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0,
+        ])
+        .unwrap();
+        let c4 = "C4".parse::<Note>().unwrap();
+        let a4 = "A4".parse::<Note>().unwrap();
+
+        assert_close(temperament.offsets_cents()[9], 0.0, 0.0001);
+        assert_close(temperament.offsets_cents()[0], -9.0, 0.0001);
+        assert_close(
+            temperament
+                .frequency_hz_for_note(a4, DEFAULT_REFERENCE_A_HZ)
+                .unwrap(),
+            440.0,
+            0.0001,
+        );
+        assert!(
+            temperament
+                .frequency_hz_for_note(c4, DEFAULT_REFERENCE_A_HZ)
+                .unwrap()
+                < c4.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap()
+        );
+    }
+
+    #[test]
+    fn tempered_tuning_model_relabels_nearest_note_with_tempered_reference_frequency() {
+        let temperament = Temperament::from_offset_slice(&[
+            10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ])
+        .unwrap();
+        let tuning = TuningModel::with_temperament(DEFAULT_REFERENCE_A_HZ, 0, temperament).unwrap();
+        let c4 = "C4".parse::<Note>().unwrap();
+        let c4_frequency_hz = tuning.frequency_hz_for_sounding_note(c4).unwrap();
+
+        let nearest = tuning
+            .nearest_displayed_note_for_frequency(c4_frequency_hz)
+            .unwrap();
+        assert_eq!(nearest.note.to_string(), "C4");
+        assert_close(nearest.reference_frequency_hz, c4_frequency_hz, 0.0001);
+        assert_close(nearest.cents, 0.0, 0.0001);
+    }
+
+    #[test]
+    fn rejects_invalid_temperament_offsets() {
+        assert_eq!(
+            Temperament::from_offset_slice(&[0.0; 11]).unwrap_err(),
+            TemperamentError::InvalidOffsetCount
+        );
+        assert_eq!(
+            Temperament::from_offset_slice(&[
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 101.0,
+            ])
+            .unwrap_err(),
+            TemperamentError::OffsetOutOfRange
+        );
     }
 
     #[test]

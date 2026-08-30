@@ -39,12 +39,19 @@ Supported flags:
     `400.0..=480.0` Hz;
 -   `--transposition-semitones <n>` sets startup note transposition
     within `-12..=12` semitones;
+-   `--temperament-offsets-cents <csv>` sets startup pitch-class
+    temperament offsets as twelve comma-separated cents values in
+    `C, C#, D, D#, E, F, F#, G, G#, A, A#, B` order;
+-   `--dump-tuning-library` prints the built-in temperament and preset
+    library as JSON and exits;
+-   `--normalize-content-pack <json>` validates and normalizes one preset
+    or temperament pack JSON object and exits;
 -   `-h`, `--help` print usage text and exit without starting audio;
 -   `-V`, `--version` print the helper version and exit without starting
     audio.
 
-`--help` and `--version` are the only documented non-protocol stdout
-modes.
+`--help`, `--version`, `--dump-tuning-library`, and
+`--normalize-content-pack` are the documented non-protocol stdout modes.
 
 ## Helper -\> UI Messages
 
@@ -73,7 +80,8 @@ Fields:
 
 -   `type`: always `pitch`
 -   `note`: nearest note name including octave after the current
-    transposition is applied; `0` means concert pitch
+    transposition is applied under the active temperament model; `0`
+    means concert pitch
 -   `frequency_hz`: detected fundamental frequency in Hz
 -   `cents`: signed deviation from the nearest note; negative is flat
     and positive is sharp
@@ -244,6 +252,7 @@ Possible initial codes:
 -   `invalid_note`
 -   `invalid_reference_frequency`
 -   `invalid_transposition`
+-   `invalid_temperament`
 -   `invalid_metronome_bpm`
 -   `invalid_metronome_meter`
 -   `invalid_metronome_subdivision`
@@ -395,6 +404,32 @@ When accepted:
     consistent and emits a fresh `tone_started` confirmation with the new
     note labels.
 
+### Set Temperament
+
+Updates the helper's active chromatic temperament at runtime.
+
+    {
+      "type": "set_temperament",
+      "offsets_cents": [-5.865, 7.82, -1.955, 11.73, 1.955, -7.82, 5.865, -3.91, 9.775, 0.0, -9.775, 3.91]
+    }
+
+Rules:
+
+-   `offsets_cents` must be an array of exactly twelve numeric values;
+-   values are interpreted in `C, C#, D, D#, E, F, F#, G, G#, A, A#, B`
+    order;
+-   values must remain within `+/-100.0` cents;
+-   the helper normalizes the array so `A` remains exactly `0.0` cents,
+    preserving the configured `A4` reference frequency.
+
+When accepted:
+
+-   subsequent pitch messages use the new temperament targets;
+-   future `play_tone` commands use the new temperament targets;
+-   if a tone is already active, the helper retunes that same scene and
+    emits a fresh `tone_started` confirmation with the new authoritative
+    frequencies.
+
 Rules:
 
 -   `frequency_hz` must be numeric;
@@ -533,6 +568,10 @@ top of that shared worker:
 ## Note Calculation
 
 Use twelve-tone equal temperament with A4 = 440 Hz by default.
+
+When a temperament is active, each sounding note frequency is derived by
+applying the active pitch-class cents offset to the equal-tempered base
+frequency.
 
 For a note `n` semitones from A4:
 

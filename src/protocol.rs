@@ -3,7 +3,7 @@ use crate::metronome::{
     validate_metronome_bpm, MetronomeState, MetronomeStateError, DEFAULT_METRONOME_BEATS_PER_BAR,
     DEFAULT_METRONOME_BEAT_UNIT, DEFAULT_METRONOME_SUBDIVISION,
 };
-use crate::note::{validate_transposition_semitones, Note};
+use crate::note::{validate_transposition_semitones, Note, Temperament};
 use crate::reference_tone::ReferenceToneScene;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -14,6 +14,7 @@ pub enum Command {
     PlayTone { scene: ReferenceToneScene },
     SetReferenceA { frequency_hz: f64 },
     SetTransposition { semitones: i32 },
+    SetTemperament { temperament: Temperament },
     StopTone,
     StartMetronome { state: MetronomeState },
     StopMetronome,
@@ -36,6 +37,7 @@ pub enum ErrorCode {
     InvalidNote,
     InvalidReferenceFrequency,
     InvalidTransposition,
+    InvalidTemperament,
     InvalidMetronomeBpm,
     InvalidMetronomeMeter,
     InvalidMetronomeSubdivision,
@@ -98,6 +100,7 @@ pub enum CommandParseError {
     InvalidNote(String),
     InvalidReferenceFrequency(String),
     InvalidTransposition(String),
+    InvalidTemperament(String),
     InvalidMetronomeBpm(String),
     InvalidMetronomeMeter(String),
     InvalidMetronomeSubdivision(String),
@@ -109,6 +112,7 @@ impl CommandParseError {
             CommandParseError::InvalidNote(_) => ErrorCode::InvalidNote,
             CommandParseError::InvalidReferenceFrequency(_) => ErrorCode::InvalidReferenceFrequency,
             CommandParseError::InvalidTransposition(_) => ErrorCode::InvalidTransposition,
+            CommandParseError::InvalidTemperament(_) => ErrorCode::InvalidTemperament,
             CommandParseError::InvalidMetronomeBpm(_) => ErrorCode::InvalidMetronomeBpm,
             CommandParseError::InvalidMetronomeMeter(_) => ErrorCode::InvalidMetronomeMeter,
             CommandParseError::InvalidMetronomeSubdivision(_) => {
@@ -142,6 +146,9 @@ impl fmt::Display for CommandParseError {
             CommandParseError::InvalidTransposition(error) => {
                 write!(f, "invalid transposition: {error}")
             }
+            CommandParseError::InvalidTemperament(error) => {
+                write!(f, "invalid temperament: {error}")
+            }
             CommandParseError::InvalidMetronomeBpm(error) => {
                 write!(f, "invalid metronome BPM: {error}")
             }
@@ -172,6 +179,7 @@ pub fn parse_command(input: &str) -> Result<Command, CommandParseError> {
         "play_tone" => parse_play_tone(object),
         "set_reference_a" => parse_set_reference_a(object),
         "set_transposition" => parse_set_transposition(object),
+        "set_temperament" => parse_set_temperament(object),
         "stop_tone" => Ok(Command::StopTone),
         "start_metronome" => parse_start_metronome(object),
         "stop_metronome" => Ok(Command::StopMetronome),
@@ -262,6 +270,34 @@ fn parse_set_transposition(object: &Map<String, Value>) -> Result<Command, Comma
     Ok(Command::SetTransposition { semitones })
 }
 
+fn parse_set_temperament(object: &Map<String, Value>) -> Result<Command, CommandParseError> {
+    let offsets_value = object.get("offsets_cents").ok_or_else(|| {
+        CommandParseError::InvalidCommand(
+            "set_temperament requires array field 'offsets_cents'".to_owned(),
+        )
+    })?;
+    let offsets_array = offsets_value.as_array().ok_or_else(|| {
+        CommandParseError::InvalidCommand(
+            "set_temperament field 'offsets_cents' must be an array of numbers".to_owned(),
+        )
+    })?;
+
+    let mut offsets_cents = Vec::with_capacity(offsets_array.len());
+    for offset_value in offsets_array {
+        let offset_cents = offset_value.as_f64().ok_or_else(|| {
+            CommandParseError::InvalidCommand(
+                "set_temperament field 'offsets_cents' must contain numeric values".to_owned(),
+            )
+        })?;
+        offsets_cents.push(offset_cents);
+    }
+
+    let temperament = Temperament::from_offset_slice(&offsets_cents)
+        .map_err(|error| CommandParseError::InvalidTemperament(error.to_string()))?;
+
+    Ok(Command::SetTemperament { temperament })
+}
+
 fn parse_start_metronome(object: &Map<String, Value>) -> Result<Command, CommandParseError> {
     let bpm = object.get("bpm").and_then(Value::as_u64).ok_or_else(|| {
         CommandParseError::InvalidCommand("start_metronome requires integer field 'bpm'".to_owned())
@@ -344,6 +380,7 @@ mod tests {
     use crate::metronome::{
         MetronomeState, DEFAULT_METRONOME_BEATS_PER_BAR, DEFAULT_METRONOME_BEAT_UNIT,
     };
+    use crate::note::Temperament;
     use crate::reference_tone::ReferenceToneScene;
 
     #[test]
@@ -418,6 +455,15 @@ mod tests {
         assert_eq!(
             parse_command(r#"{"type":"set_transposition","semitones":2}"#).unwrap(),
             Command::SetTransposition { semitones: 2 }
+        );
+        assert_eq!(
+            parse_command(
+                r#"{"type":"set_temperament","offsets_cents":[0,0,0,0,0,0,0,0,0,0,0,0]}"#
+            )
+            .unwrap(),
+            Command::SetTemperament {
+                temperament: Temperament::equal(),
+            }
         );
     }
 
@@ -495,6 +541,24 @@ mod tests {
             parse_command(r#"{"type":"set_transposition","semitones":13}"#).unwrap_err(),
             CommandParseError::InvalidTransposition(
                 "transposition must be within -12..=12 semitones".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"set_temperament"}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "set_temperament requires array field 'offsets_cents'".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"set_temperament","offsets_cents":"0,0,0"}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "set_temperament field 'offsets_cents' must be an array of numbers".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"set_temperament","offsets_cents":[0,0,0]}"#).unwrap_err(),
+            CommandParseError::InvalidTemperament(
+                "temperament offsets must contain exactly 12 pitch classes".to_owned()
             )
         );
         assert_eq!(
@@ -623,6 +687,10 @@ mod tests {
         assert_eq!(
             CommandParseError::InvalidTransposition("bad".to_owned()).code(),
             ErrorCode::InvalidTransposition
+        );
+        assert_eq!(
+            CommandParseError::InvalidTemperament("bad".to_owned()).code(),
+            ErrorCode::InvalidTemperament
         );
         assert_eq!(
             CommandParseError::InvalidMetronomeBpm("bad".to_owned()).code(),

@@ -44,6 +44,7 @@ BarWidget {
   property int transpositionSemitones: 0
   property string noteSpelling: "sharps"
   property string selectedPresetId: "guitar.standard"
+  property string selectedTemperamentId: "equal.12tet"
   property int selectedReferenceMidiNumber: 69
   property string referencePlaybackMode: "single"
   property int selectedReferenceIntervalSemitones: 7
@@ -58,6 +59,19 @@ BarWidget {
   property var metronomeTapTimes: []
   property var favoriteQuickSwitches: []
   property var recentQuickSwitches: []
+  property var importedTemperamentPacks: []
+  property var importedPresetPacks: []
+  property var builtInTemperamentPacks: []
+  property var builtInPresetPacks: []
+  property string tuningLibraryLoadError: ""
+  property bool contentPackTransferBusy: false
+  property string contentPackTransferStatusText: ""
+  property bool contentPackTransferStatusError: false
+  property string pendingContentPackJson: ""
+  property string contentPackToolStdout: ""
+  property string contentPackToolStderr: ""
+  property string tuningLibraryStdout: ""
+  property string tuningLibraryStderr: ""
 
   readonly property int minimumReferenceMidiNumber: 12
   readonly property int maximumReferenceMidiNumber: 119
@@ -70,7 +84,7 @@ BarWidget {
   readonly property int maximumReferenceIntervalSemitones: 24
   readonly property int maximumFavoriteQuickSwitches: 6
   readonly property int maximumRecentQuickSwitches: 6
-  readonly property int settingsConfigVersion: 1
+  readonly property int settingsConfigVersion: 2
   readonly property int helperRecoveryMaxAttempts: 5
   readonly property int defaultMetronomeBpm: 100
   readonly property int defaultMetronomeBeatsPerBar: 4
@@ -79,6 +93,8 @@ BarWidget {
   readonly property int metronomeTapResetMs: 2000
   readonly property int defaultReferenceIntervalSemitones: 7
   readonly property string defaultReferenceChordId: "major"
+  readonly property string defaultPresetId: "guitar.standard"
+  readonly property string defaultTemperamentId: "equal.12tet"
   readonly property var metronomeMeterPresets: [
     { beatsPerBar: 2, beatUnit: 4, label: "2/4" },
     { beatsPerBar: 3, beatUnit: 4, label: "3/4" },
@@ -114,53 +130,59 @@ BarWidget {
     { id: "sus2", label: "Sus2", intervalsSemitones: [2, 7] },
     { id: "sus4", label: "Sus4", intervalsSemitones: [5, 7] },
   ]
-  readonly property var tuningPresetGroups: [
-    {
-      label: "Guitar",
-      presets: [
-        { id: "guitar.standard", label: "Standard", notes: ["E2", "A2", "D3", "G3", "B3", "E4"] },
-        { id: "guitar.drop_d", label: "Drop D", notes: ["D2", "A2", "D3", "G3", "B3", "E4"] },
-        { id: "guitar.dadgad", label: "DADGAD", notes: ["D2", "A2", "D3", "G3", "A3", "D4"] },
-      ],
-    },
-    {
-      label: "Bass",
-      presets: [
-        { id: "bass.standard_4", label: "4-string", notes: ["E1", "A1", "D2", "G2"] },
-        { id: "bass.standard_5", label: "5-string", notes: ["B0", "E1", "A1", "D2", "G2"] },
-      ],
-    },
-    {
-      label: "Ukulele",
-      presets: [
-        { id: "ukulele.standard", label: "Standard", notes: ["G4", "C4", "E4", "A4"] },
-        { id: "ukulele.baritone", label: "Baritone", notes: ["D3", "G3", "B3", "E4"] },
-      ],
-    },
-    {
-      label: "Violin Family",
-      presets: [
-        { id: "violin.violin", label: "Violin", notes: ["G3", "D4", "A4", "E5"] },
-        { id: "violin.viola", label: "Viola", notes: ["C3", "G3", "D4", "A4"] },
-        { id: "violin.cello", label: "Cello", notes: ["C2", "G2", "D3", "A3"] },
-      ],
-    },
-  ]
+  readonly property var defaultTemperamentOffsetsCents: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  readonly property var fallbackTemperament: ({
+    id: defaultTemperamentId,
+    label: "Equal 12-TET",
+    description: "The v1.x default equal temperament.",
+    packId: "fallback.default",
+    packLabel: "Default",
+    source: "fallback",
+    offsets_cents: defaultTemperamentOffsetsCents,
+  })
+  readonly property var fallbackPreset: ({
+    id: defaultPresetId,
+    label: "Standard",
+    description: "Six-string standard guitar tuning.",
+    groupId: "guitar",
+    groupLabel: "Guitar",
+    packId: "fallback.default",
+    packLabel: "Default",
+    source: "fallback",
+    targets: [
+      { note: "E2", label: "E2" },
+      { note: "A2", label: "A2" },
+      { note: "D3", label: "D3" },
+      { note: "G3", label: "G3" },
+      { note: "B3", label: "B3" },
+      { note: "E4", label: "E4" },
+    ],
+  })
+  readonly property var allTemperamentPacks: taggedContentPacks(builtInTemperamentPacks, importedTemperamentPacks, "temperament_pack")
+  readonly property var allPresetPacks: taggedContentPacks(builtInPresetPacks, importedPresetPacks, "preset_pack")
+  readonly property var temperamentPackSections: temperamentPackSectionsForDisplay(allTemperamentPacks)
+  readonly property var tuningPresetGroups: presetGroupsForDisplay(allPresetPacks)
   readonly property bool pitchActive: signalState === "pitch"
   readonly property bool toneActive: activeToneNote !== ""
   readonly property bool inTune: pitchActive && Math.abs(detectedCents) <= 5
   readonly property bool hasAlert: helperRecoveryPending || helperState === "error" || runtimeErrorMessage !== ""
   readonly property bool shouldAnimateUi: !reducedMotionMode
   readonly property bool transpositionActive: transpositionSemitones !== 0
-  readonly property bool standardGuitarPresetSelected: selectedPresetId === "guitar.standard"
+  readonly property bool standardGuitarPresetSelected: selectedPreset.id === defaultPresetId
   readonly property int minimumDisplayedReferenceMidiNumber: minimumDisplayedReferenceMidiNumberForTransposition(transpositionSemitones)
   readonly property int maximumDisplayedReferenceMidiNumber: maximumDisplayedReferenceMidiNumberForTransposition(transpositionSemitones)
   readonly property int selectedReferencePitchClassIndex: ((selectedReferenceMidiNumber % 12) + 12) % 12
   readonly property int selectedReferenceOctave: Math.floor(selectedReferenceMidiNumber / 12) - 1
   readonly property var selectedPreset: presetById(selectedPresetId)
-  readonly property var selectedPresetBaseNotes: selectedPreset ? selectedPreset.notes : []
-  readonly property var selectedPresetNotes: transposeNoteTextList(selectedPresetBaseNotes, transpositionSemitones)
-  readonly property string selectedPresetLabel: selectedPreset ? (selectedPreset.groupLabel + " | " + selectedPreset.label) : "Guitar | Standard"
+  readonly property var selectedPresetTargets: transposePresetTargets(selectedPreset.targets, transpositionSemitones)
+  readonly property var selectedPresetNotes: selectedPresetTargetNotes(selectedPresetTargets)
+  readonly property string selectedPresetLabel: selectedPreset.groupLabel + " | " + selectedPreset.label
+  readonly property var selectedTemperament: temperamentById(selectedTemperamentId)
+  readonly property string selectedTemperamentLabelText: String(selectedTemperament.label || fallbackTemperament.label)
+  readonly property string selectedTemperamentDescription: String(selectedTemperament.description || "")
+  readonly property var selectedTemperamentOffsetsCents: normalizedTemperamentOffsets(selectedTemperament.offsets_cents)
+  readonly property string selectedTemperamentFingerprint: temperamentFingerprint(selectedTemperamentOffsetsCents)
+  readonly property bool temperamentActive: selectedTemperament.id !== defaultTemperamentId
   readonly property bool currentQuickSwitchFavorite: indexOfQuickSwitchScene(favoriteQuickSwitches, currentQuickSwitchScene()) >= 0
   readonly property var visibleRecentQuickSwitches: recentQuickSwitchesForDisplay()
   readonly property bool hasQuickSwitches: favoriteQuickSwitches.length > 0 || visibleRecentQuickSwitches.length > 0
@@ -262,7 +284,7 @@ BarWidget {
     return "Listening"
   }
   readonly property string quickTuneHeadingText: standardGuitarPresetSelected ? "Standard guitar" : "Quick tune"
-  readonly property string keyboardShortcutSummary: "Keys: 1-6 notes | Ctrl+1-6 favorites | F favorite | Left/Right note | Alt+Up/Down octave | Shift+Left/Right BPM | D mode | [/] shape | M metro | Shift+M tap | Ctrl+M meter | Alt+M subdiv | P play/stop | X stop | T power | R restart | Esc close"
+  readonly property string keyboardShortcutSummary: "Keys: 1-8 notes | Ctrl+1-6 favorites | F favorite | Left/Right note | Alt+Up/Down octave | Shift+Left/Right BPM | D mode | [/] shape | M metro | Shift+M tap | Ctrl+M meter | Alt+M subdiv | P play/stop | X stop | T power | R restart | Esc close"
   readonly property bool opened: popupLoader.item ? popupLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: popupLoader.item ? popupLoader.item.popoutSwitchClosing === true : false
   readonly property string helperScriptPath: localPath("scripts/run-helper.sh")
@@ -273,7 +295,11 @@ BarWidget {
     formatReferenceAForHelper(referenceAHz),
     "--transposition-semitones",
     String(normalizeTranspositionSemitones(transpositionSemitones)),
+    "--temperament-offsets-cents",
+    formatTemperamentOffsetsForHelper(selectedTemperamentOffsetsCents),
   ]
+  readonly property var tuningLibraryCommand: ["bash", helperScriptPath, "--dump-tuning-library"]
+  readonly property var contentPackToolCommand: ["bash", helperScriptPath, "--normalize-content-pack", pendingContentPackJson]
   readonly property string readoutTitleText: {
     if (helperRecoveryPending) return "Recovering audio"
     if (pitchActive) return detectedNoteLabel
@@ -314,17 +340,23 @@ BarWidget {
       return activeToneSceneLabel
         + (metronomeActive ? (" | " + metronomeBpm + " BPM") : "")
         + (transpositionActive ? (" | " + transpositionLabelText) : "")
+        + (temperamentActive ? (" | " + selectedTemperamentLabelText) : "")
         + " | " + selectedPresetLabel
     if (pitchActive)
       return selectedPresetLabel
         + (transpositionActive ? (" | " + transpositionLabelText) : "")
+        + (temperamentActive ? (" | " + selectedTemperamentLabelText) : "")
         + (metronomeActive ? (" | " + metronomeBpm + " BPM") : "")
         + " | A4 = " + formatReferenceA(referenceAHz)
     if (metronomeActive)
       return metronomeBpm + " BPM | " + metronomeMeterLabel + " | " + metronomeSubdivisionLabel
         + (transpositionActive ? (" | " + transpositionLabelText) : "")
+        + (temperamentActive ? (" | " + selectedTemperamentLabelText) : "")
         + " | " + selectedPresetLabel
-    return selectedPresetLabel + (transpositionActive ? (" | " + transpositionLabelText) : "") + " | A4 = " + formatReferenceA(referenceAHz)
+    return selectedPresetLabel
+      + (transpositionActive ? (" | " + transpositionLabelText) : "")
+      + (temperamentActive ? (" | " + selectedTemperamentLabelText) : "")
+      + " | A4 = " + formatReferenceA(referenceAHz)
   }
   readonly property string buttonText: {
     if (helperRecoveryPending) return "RETRY"
@@ -364,12 +396,14 @@ BarWidget {
 
     if (pitchActive) {
       lines.push(detectedNoteLabel + "  " + formatSignedCents(detectedCents) + "  " + formatFrequency(detectedFrequencyHz) + " Hz")
+      if (temperamentActive) lines.push(selectedTemperamentLabelText)
       return lines.join("\n")
     }
 
     if (toneActive) {
       lines.push(activeTonePlaybackTypeText + ": " + activeToneSceneLabel)
       if (activeToneVoiceSummaryText !== "") lines.push(activeToneVoiceSummaryText)
+      if (temperamentActive) lines.push(selectedTemperamentLabelText)
       return lines.join("\n")
     }
 
@@ -479,17 +513,218 @@ BarWidget {
     return formatMidiNote(shifted, "sharps")
   }
 
-  function transposeNoteTextList(noteTexts, semitoneOffset) {
-    var list = Array.isArray(noteTexts) ? noteTexts : []
+  function roundToFourDecimals(value) {
+    var rounded = Math.round(finiteNumber(value, 0) * 10000) / 10000
+    return Math.abs(rounded) < 0.00005 ? 0 : rounded
+  }
+
+  function normalizeStableId(value, fallback) {
+    var text = String(value || "").trim().toLowerCase()
+    return text !== "" ? text : String(fallback || "")
+  }
+
+  function normalizedTemperamentOffsets(values) {
+    if (!Array.isArray(values) || values.length !== 12) return defaultTemperamentOffsetsCents.slice(0)
+
+    var normalized = []
+    for (var index = 0; index < values.length; index++) {
+      var numeric = Number(values[index])
+      if (!isFinite(numeric)) return defaultTemperamentOffsetsCents.slice(0)
+      normalized.push(Math.max(-100, Math.min(100, roundToFourDecimals(numeric))))
+    }
+
+    var aOffset = normalized[9]
+    for (var offsetIndex = 0; offsetIndex < normalized.length; offsetIndex++)
+      normalized[offsetIndex] = roundToFourDecimals(normalized[offsetIndex] - aOffset)
+
+    return normalized
+  }
+
+  function temperamentFingerprint(offsets) {
+    var normalized = normalizedTemperamentOffsets(offsets)
+    return normalized.join(",")
+  }
+
+  function formatTemperamentOffsetsForHelper(offsets) {
+    var normalized = normalizedTemperamentOffsets(offsets)
+    var formatted = []
+    for (var index = 0; index < normalized.length; index++)
+      formatted.push(Number(normalized[index]).toFixed(4))
+
+    return formatted.join(",")
+  }
+
+  function filteredContentPackList(values, expectedKind, source) {
+    var list = Array.isArray(values) ? values : []
+    var filtered = []
+    var seenPackIds = {}
+
+    for (var index = 0; index < list.length; index++) {
+      var pack = list[index]
+      if (!pack || typeof pack !== "object" || Array.isArray(pack)) continue
+
+      var packKind = String(pack.kind || "")
+      var packId = normalizeStableId(pack.id, "")
+      if (packKind !== expectedKind || packId === "" || seenPackIds[packId]) continue
+
+      var tagged = {}
+      for (var key in pack)
+        tagged[key] = pack[key]
+
+      tagged.id = packId
+      tagged.source = source
+      filtered.push(tagged)
+      seenPackIds[packId] = true
+    }
+
+    return filtered
+  }
+
+  function taggedContentPacks(builtInPacks, importedPacks, expectedKind) {
+    return filteredContentPackList(builtInPacks, expectedKind, "builtin")
+      .concat(filteredContentPackList(importedPacks, expectedKind, "imported"))
+  }
+
+  function presetGroupsForDisplay(packs) {
+    var list = Array.isArray(packs) ? packs : []
+    var groups = []
+
+    for (var packIndex = 0; packIndex < list.length; packIndex++) {
+      var pack = list[packIndex]
+      var packLabel = String(pack.label || "")
+      var source = String(pack.source || "builtin")
+      var packGroups = Array.isArray(pack.groups) ? pack.groups : []
+
+      for (var groupIndex = 0; groupIndex < packGroups.length; groupIndex++) {
+        var group = packGroups[groupIndex]
+        var groupLabel = String(group.label || "")
+        var presets = Array.isArray(group.presets) ? group.presets : []
+        var displayPresets = []
+
+        for (var presetIndex = 0; presetIndex < presets.length; presetIndex++) {
+          var preset = presets[presetIndex]
+          displayPresets.push({
+            id: normalizeStableId(preset.id, defaultPresetId),
+            label: String(preset.label || ""),
+            description: String(preset.description || ""),
+            targets: Array.isArray(preset.targets) ? preset.targets : [],
+            groupId: normalizeStableId(group.id, "group" + groupIndex),
+            groupLabel: groupLabel,
+            packId: normalizeStableId(pack.id, "pack" + packIndex),
+            packLabel: packLabel,
+            source: source,
+          })
+        }
+
+        groups.push({
+          id: normalizeStableId(group.id, "group" + groupIndex),
+          label: packLabel !== "" ? (packLabel + " | " + groupLabel) : groupLabel,
+          groupLabel: groupLabel,
+          packId: normalizeStableId(pack.id, "pack" + packIndex),
+          packLabel: packLabel,
+          source: source,
+          presets: displayPresets,
+        })
+      }
+    }
+
+    if (groups.length > 0) return groups
+
+    return [{
+      id: fallbackPreset.groupId,
+      label: fallbackPreset.groupLabel,
+      groupLabel: fallbackPreset.groupLabel,
+      packId: fallbackPreset.packId,
+      packLabel: fallbackPreset.packLabel,
+      source: fallbackPreset.source,
+      presets: [fallbackPreset],
+    }]
+  }
+
+  function temperamentPackSectionsForDisplay(packs) {
+    var list = Array.isArray(packs) ? packs : []
+    var sections = []
+
+    for (var packIndex = 0; packIndex < list.length; packIndex++) {
+      var pack = list[packIndex]
+      var temperaments = Array.isArray(pack.temperaments) ? pack.temperaments : []
+      var displayTemperaments = []
+
+      for (var temperamentIndex = 0; temperamentIndex < temperaments.length; temperamentIndex++) {
+        var temperament = temperaments[temperamentIndex]
+        displayTemperaments.push({
+          id: normalizeStableId(temperament.id, defaultTemperamentId),
+          label: String(temperament.label || ""),
+          description: String(temperament.description || ""),
+          offsets_cents: normalizedTemperamentOffsets(temperament.offsets_cents),
+          packId: normalizeStableId(pack.id, "pack" + packIndex),
+          packLabel: String(pack.label || ""),
+          source: String(pack.source || "builtin"),
+        })
+      }
+
+      sections.push({
+        id: normalizeStableId(pack.id, "pack" + packIndex),
+        label: String(pack.label || ""),
+        description: String(pack.description || ""),
+        source: String(pack.source || "builtin"),
+        temperaments: displayTemperaments,
+      })
+    }
+
+    if (sections.length > 0) return sections
+    return [{
+      id: fallbackTemperament.packId,
+      label: fallbackTemperament.packLabel,
+      description: fallbackTemperament.description,
+      source: fallbackTemperament.source,
+      temperaments: [fallbackTemperament],
+    }]
+  }
+
+  function transposePresetTargets(targets, semitoneOffset) {
+    var list = Array.isArray(targets) ? targets : []
     var transposed = []
 
     for (var index = 0; index < list.length; index++) {
-      var noteText = transposeNoteText(list[index], semitoneOffset)
-      if (noteText === "") continue
-      transposed.push(noteText)
+      var target = list[index]
+      var noteText = target && typeof target === "object" && !Array.isArray(target)
+        ? String(target.note || "")
+        : String(target || "")
+      var labelText = target && typeof target === "object" && !Array.isArray(target)
+        ? String(target.label || noteText)
+        : noteText
+      var transposedNote = transposeNoteText(noteText, semitoneOffset)
+      if (transposedNote === "") continue
+
+      transposed.push({
+        note: transposedNote,
+        label: labelText.trim() !== "" ? labelText : transposedNote,
+      })
     }
 
     return transposed
+  }
+
+  function selectedPresetTargetNotes(targets) {
+    var list = Array.isArray(targets) ? targets : []
+    var notes = []
+
+    for (var index = 0; index < list.length; index++) {
+      var noteText = String((list[index] && list[index].note) || "")
+      if (noteText !== "") notes.push(noteText)
+    }
+
+    return notes
+  }
+
+  function presetTargetDisplayLabel(target) {
+    var noteText = target && typeof target === "object" ? String(target.note || "") : String(target || "")
+    var labelText = target && typeof target === "object" ? String(target.label || "").trim() : ""
+    var displayedNote = displayNoteLabel(noteText)
+    if (labelText === "" || sameNoteText(labelText, noteText) || labelText === displayedNote) return displayedNote
+    if (displayedNote === "") return labelText
+    return labelText + " | " + displayedNote
   }
 
   function transpositionPresetBySemitones(value) {
@@ -805,8 +1040,25 @@ BarWidget {
     return leftMidiNumber === rightMidiNumber
   }
 
+  function temperamentById(temperamentId) {
+    var targetId = normalizeStableId(temperamentId, defaultTemperamentId)
+
+    for (var sectionIndex = 0; sectionIndex < temperamentPackSections.length; sectionIndex++) {
+      var section = temperamentPackSections[sectionIndex]
+      var temperaments = Array.isArray(section.temperaments) ? section.temperaments : []
+
+      for (var temperamentIndex = 0; temperamentIndex < temperaments.length; temperamentIndex++) {
+        var temperament = temperaments[temperamentIndex]
+        if (normalizeStableId(temperament.id, defaultTemperamentId) !== targetId) continue
+        return temperament
+      }
+    }
+
+    return fallbackTemperament
+  }
+
   function presetById(presetId) {
-    var targetId = String(presetId || "")
+    var targetId = normalizeStableId(presetId, defaultPresetId)
 
     for (var groupIndex = 0; groupIndex < tuningPresetGroups.length; groupIndex++) {
       var group = tuningPresetGroups[groupIndex]
@@ -814,28 +1066,40 @@ BarWidget {
 
       for (var presetIndex = 0; presetIndex < presets.length; presetIndex++) {
         var preset = presets[presetIndex]
-        if (String(preset.id || "") !== targetId) continue
-
-        return {
-          id: String(preset.id || ""),
-          label: String(preset.label || ""),
-          groupLabel: String(group.label || ""),
-          notes: Array.isArray(preset.notes) ? preset.notes : [],
-        }
+        if (normalizeStableId(preset.id, defaultPresetId) !== targetId) continue
+        return preset
       }
     }
 
-    return {
-      id: "guitar.standard",
-      label: "Standard",
-      groupLabel: "Guitar",
-      notes: ["E2", "A2", "D3", "G3", "B3", "E4"],
-    }
+    return fallbackPreset
+  }
+
+  function presetPackByPresetId(presetId) {
+    var preset = presetById(presetId)
+    var targetPackId = normalizeStableId(preset.packId, "")
+    var packs = allPresetPacks
+
+    for (var index = 0; index < packs.length; index++)
+      if (normalizeStableId(packs[index].id, "") === targetPackId) return packs[index]
+
+    return null
+  }
+
+  function temperamentPackByTemperamentId(temperamentId) {
+    var temperament = temperamentById(temperamentId)
+    var targetPackId = normalizeStableId(temperament.packId, "")
+    var packs = allTemperamentPacks
+
+    for (var index = 0; index < packs.length; index++)
+      if (normalizeStableId(packs[index].id, "") === targetPackId) return packs[index]
+
+    return null
   }
 
   function isQuickSwitchSceneCandidate(value) {
     return value && typeof value === "object"
       && ("presetId" in value
+        || "temperamentId" in value
         || "referenceNote" in value
         || "transpositionSemitones" in value
         || "playbackMode" in value
@@ -858,7 +1122,8 @@ BarWidget {
     var metronomeMeter = metronomeMeterPresetByValues(value.metronomeBeatsPerBar, value.metronomeBeatUnit)
 
     return {
-      presetId: presetById(value.presetId).id,
+      presetId: normalizeStableId(value.presetId, defaultPresetId),
+      temperamentId: normalizeStableId(value.temperamentId, defaultTemperamentId),
       referenceNote: formatMidiNote(referenceMidiNumber, "sharps"),
       transpositionSemitones: transposition,
       playbackMode: normalizeReferencePlaybackMode(value.playbackMode),
@@ -874,6 +1139,7 @@ BarWidget {
   function currentQuickSwitchScene() {
     return normalizeQuickSwitchScene({
       presetId: selectedPresetId,
+      temperamentId: selectedTemperamentId,
       referenceNote: selectedReferenceCommandNoteLabel,
       transpositionSemitones: transpositionSemitones,
       playbackMode: referencePlaybackMode,
@@ -892,6 +1158,7 @@ BarWidget {
 
     return [
       normalized.presetId,
+      normalized.temperamentId,
       normalized.referenceNote,
       normalized.transpositionSemitones,
       normalized.playbackMode,
@@ -1034,6 +1301,7 @@ BarWidget {
     var presetText = quickSwitchPresetSummary(normalized)
     var referenceText = quickSwitchSceneLabel(normalized)
     var transpositionPreset = transpositionPresetBySemitones(normalized.transpositionSemitones)
+    var temperament = temperamentById(normalized.temperamentId)
 
     if (presetText !== "") primaryParts.push(presetText)
     if (referenceText !== "") primaryParts.push(referenceText)
@@ -1042,6 +1310,8 @@ BarWidget {
         detailParts.push(String(transpositionPreset.label || ""))
       else detailParts.push(formatSignedSemitoneOffset(normalized.transpositionSemitones))
     }
+    if (normalizeStableId(normalized.temperamentId, defaultTemperamentId) !== defaultTemperamentId)
+      detailParts.push(String(temperament.label || "Temperament"))
     detailParts.push("M" + normalized.metronomeBpm)
     if (meterLabel !== defaultMeterLabel || normalized.metronomeSubdivision !== defaultMetronomeSubdivision)
       detailParts.push(meterLabel)
@@ -1083,10 +1353,13 @@ BarWidget {
       || metronomeBeatUnit !== normalized.metronomeBeatUnit
       || metronomeSubdivision !== normalized.metronomeSubdivision
     var transpositionChanged = transpositionSemitones !== normalized.transpositionSemitones
+    var temperamentChanged = normalizeStableId(selectedTemperamentId, defaultTemperamentId)
+      !== normalizeStableId(normalized.temperamentId, defaultTemperamentId)
     var referenceMidiNumber = parseNoteMidiNumber(normalized.referenceNote)
 
     settingsHydrating = true
     selectedPresetId = normalized.presetId
+    selectedTemperamentId = normalized.temperamentId
     transpositionSemitones = normalized.transpositionSemitones
     selectedReferenceMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(referenceMidiNumber === null ? 69 : referenceMidiNumber, normalized.transpositionSemitones)
     referencePlaybackMode = normalized.playbackMode
@@ -1102,6 +1375,8 @@ BarWidget {
 
     if (transpositionChanged && (helperWanted || helperProcessStarted || helperProc.running))
       queueHelperCommand({ type: "set_transposition", semitones: transpositionSemitones })
+    if (temperamentChanged && (helperWanted || helperProcessStarted || helperProc.running))
+      queueHelperCommand({ type: "set_temperament", offsets_cents: selectedTemperamentOffsetsCents.slice(0) })
     if (currentReferenceState !== nextReferenceState && toneActive) playSelectedTone()
     if (metronomeChanged && metronomeActive && (helperWanted || helperProcessStarted || helperProc.running))
       queueHelperCommand(metronomeStartCommand())
@@ -1118,6 +1393,8 @@ BarWidget {
   function normalizedSettingsObject(value) {
     var source = value && typeof value === "object" ? value : ({})
     var transposition = normalizeTranspositionSemitones(source.transpositionSemitones)
+    var normalizedImportedTemperamentPacks = storedContentPackList(source.importedTemperamentPacks, "temperament_pack")
+    var normalizedImportedPresetPacks = storedContentPackList(source.importedPresetPacks, "preset_pack")
     var selectedMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(
       parseNoteMidiNumber(source.selectedReferenceNote) === null ? 69 : parseNoteMidiNumber(source.selectedReferenceNote),
       transposition
@@ -1132,7 +1409,8 @@ BarWidget {
       referenceAHz: normalizeReferenceAHz(source.referenceAHz),
       transpositionSemitones: transposition,
       noteSpelling: normalizeNoteSpelling(source.noteSpelling),
-      selectedPresetId: presetById(source.selectedPresetId).id,
+      selectedPresetId: normalizeStableId(source.selectedPresetId, defaultPresetId),
+      selectedTemperamentId: normalizeStableId(source.selectedTemperamentId, defaultTemperamentId),
       selectedReferenceNote: formatMidiNote(selectedMidiNumber, "sharps"),
       metronomeBpm: normalizeMetronomeBpm(source.metronomeBpm),
       metronomeBeatsPerBar: metronomePreset.beatsPerBar,
@@ -1142,6 +1420,8 @@ BarWidget {
       reducedMotionMode: normalizeBooleanSetting(source.reducedMotionMode, false),
       favoriteQuickSwitches: filteredQuickSwitchSceneList(source.favoriteQuickSwitches, null, maximumFavoriteQuickSwitches),
       recentQuickSwitches: filteredQuickSwitchSceneList(source.recentQuickSwitches, null, maximumRecentQuickSwitches),
+      importedTemperamentPacks: normalizedImportedTemperamentPacks,
+      importedPresetPacks: normalizedImportedPresetPacks,
     }
   }
 
@@ -1151,6 +1431,7 @@ BarWidget {
       transpositionSemitones: transpositionSemitones,
       noteSpelling: noteSpelling,
       selectedPresetId: selectedPresetId,
+      selectedTemperamentId: selectedTemperamentId,
       selectedReferenceNote: selectedReferenceCommandNoteLabel,
       metronomeBpm: metronomeBpm,
       metronomeBeatsPerBar: metronomeBeatsPerBar,
@@ -1160,6 +1441,8 @@ BarWidget {
       reducedMotionMode: reducedMotionMode,
       favoriteQuickSwitches: favoriteQuickSwitches,
       recentQuickSwitches: recentQuickSwitches,
+      importedTemperamentPacks: importedTemperamentPacks,
+      importedPresetPacks: importedPresetPacks,
     })
   }
 
@@ -1183,6 +1466,7 @@ BarWidget {
     var shouldPersist = persistChanges !== false
     var previousReferenceAHz = referenceAHz
     var previousTranspositionSemitones = transpositionSemitones
+    var previousTemperamentId = selectedTemperamentId
     var previousMetronomeBpm = metronomeBpm
     var previousMetronomeBeatsPerBar = metronomeBeatsPerBar
     var previousMetronomeBeatUnit = metronomeBeatUnit
@@ -1195,6 +1479,7 @@ BarWidget {
     transpositionSemitones = settings.transpositionSemitones
     noteSpelling = settings.noteSpelling
     selectedPresetId = settings.selectedPresetId
+    selectedTemperamentId = settings.selectedTemperamentId
     metronomeBpm = settings.metronomeBpm
     metronomeBeatsPerBar = settings.metronomeBeatsPerBar
     metronomeBeatUnit = settings.metronomeBeatUnit
@@ -1203,6 +1488,8 @@ BarWidget {
     reducedMotionMode = settings.reducedMotionMode
     favoriteQuickSwitches = settings.favoriteQuickSwitches
     recentQuickSwitches = settings.recentQuickSwitches
+    importedTemperamentPacks = settings.importedTemperamentPacks
+    importedPresetPacks = settings.importedPresetPacks
     selectedReferenceMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(selectedMidiNumber === null ? 69 : selectedMidiNumber, transpositionSemitones)
     settingsHydrating = false
 
@@ -1215,6 +1502,10 @@ BarWidget {
     if (transpositionSemitones !== previousTranspositionSemitones
         && (helperWanted || helperProcessStarted || helperProc.running)) {
       queueHelperCommand({ type: "set_transposition", semitones: transpositionSemitones })
+    }
+    if (normalizeStableId(selectedTemperamentId, defaultTemperamentId) !== normalizeStableId(previousTemperamentId, defaultTemperamentId)
+        && (helperWanted || helperProcessStarted || helperProc.running)) {
+      queueHelperCommand({ type: "set_temperament", offsets_cents: selectedTemperamentOffsetsCents.slice(0) })
     }
 
     var currentReferenceState = quickSwitchReferenceStateFingerprint(currentQuickSwitchScene())
@@ -1301,8 +1592,239 @@ BarWidget {
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
+  function storedContentPackList(values, expectedKind) {
+    var filtered = filteredContentPackList(values, expectedKind, "imported")
+    var stored = []
+
+    for (var index = 0; index < filtered.length; index++) {
+      var pack = filtered[index]
+      var clean = {}
+      for (var key in pack)
+        if (key !== "source") clean[key] = pack[key]
+
+      stored.push(clean)
+    }
+
+    return stored
+  }
+
+  function resolvedQuickSwitchScene(scene) {
+    var normalized = normalizeQuickSwitchScene(scene)
+    if (!normalized) return null
+
+    normalized.presetId = presetById(normalized.presetId).id
+    normalized.temperamentId = temperamentById(normalized.temperamentId).id
+    return normalized
+  }
+
+  function resolvedQuickSwitchSceneList(scenes, limit) {
+    var list = Array.isArray(scenes) ? scenes : []
+    var resolved = []
+
+    for (var index = 0; index < list.length; index++) {
+      var scene = resolvedQuickSwitchScene(list[index])
+      if (scene) resolved.push(scene)
+    }
+
+    return filteredQuickSwitchSceneList(resolved, null, limit)
+  }
+
+  function syncSelectedTemperamentWithHelper() {
+    if (!(helperWanted || helperProcessStarted || helperProc.running)) return
+    queueHelperCommand({ type: "set_temperament", offsets_cents: selectedTemperamentOffsetsCents.slice(0) })
+  }
+
+  function reconcileSelectedTuningSelections(persistChanges) {
+    var shouldPersist = persistChanges !== false
+    var previousPresetId = selectedPresetId
+    var previousTemperamentId = selectedTemperamentId
+    var nextPresetId = presetById(selectedPresetId).id
+    var nextTemperamentId = temperamentById(selectedTemperamentId).id
+
+    settingsHydrating = true
+    selectedPresetId = nextPresetId
+    selectedTemperamentId = nextTemperamentId
+    favoriteQuickSwitches = resolvedQuickSwitchSceneList(favoriteQuickSwitches, maximumFavoriteQuickSwitches)
+    recentQuickSwitches = resolvedQuickSwitchSceneList(recentQuickSwitches, maximumRecentQuickSwitches)
+    settingsHydrating = false
+
+    if (shouldPersist && (previousPresetId !== nextPresetId
+        || previousTemperamentId !== nextTemperamentId)) {
+      persistWidgetSettings()
+    }
+    if (previousTemperamentId !== nextTemperamentId)
+      syncSelectedTemperamentWithHelper()
+  }
+
+  function applyBuiltInTuningLibrary(libraryObject) {
+    if (!libraryObject || typeof libraryObject !== "object") return false
+
+    var previousTemperamentFingerprint = selectedTemperamentFingerprint
+
+    builtInTemperamentPacks = storedContentPackList(libraryObject.temperament_packs, "temperament_pack")
+    builtInPresetPacks = storedContentPackList(libraryObject.preset_packs, "preset_pack")
+    tuningLibraryLoadError = ""
+    reconcileSelectedTuningSelections(true)
+    if (previousTemperamentFingerprint !== selectedTemperamentFingerprint)
+      syncSelectedTemperamentWithHelper()
+    return true
+  }
+
+  function loadBuiltInTuningLibrary() {
+    if (tuningLibraryProc.running) return
+
+    tuningLibraryLoadError = ""
+    tuningLibraryStdout = ""
+    tuningLibraryStderr = ""
+    tuningLibraryProc.running = true
+  }
+
+  function contentPackJsonText(pack) {
+    if (!pack || typeof pack !== "object") return ""
+
+    var exported = {}
+    for (var key in pack)
+      if (key !== "source") exported[key] = pack[key]
+
+    return JSON.stringify(exported, null, 2)
+  }
+
+  function exportedSelectedPresetPackJson() {
+    return contentPackJsonText(presetPackByPresetId(selectedPresetId))
+  }
+
+  function exportedSelectedTemperamentPackJson() {
+    return contentPackJsonText(temperamentPackByTemperamentId(selectedTemperamentId))
+  }
+
+  function importedContentPackById(packId, values, expectedKind) {
+    var normalizedPackId = normalizeStableId(packId, "")
+    var list = filteredContentPackList(values, expectedKind, "imported")
+
+    for (var index = 0; index < list.length; index++)
+      if (normalizeStableId(list[index].id, "") === normalizedPackId) return list[index]
+
+    return null
+  }
+
+  function removeImportedContentPack(packId, expectedKind) {
+    var normalizedPackId = normalizeStableId(packId, "")
+    var sourceList = expectedKind === "temperament_pack" ? importedTemperamentPacks : importedPresetPacks
+    var filtered = []
+
+    for (var index = 0; index < sourceList.length; index++) {
+      var pack = sourceList[index]
+      if (normalizeStableId(pack && pack.id, "") === normalizedPackId) continue
+      filtered.push(pack)
+    }
+
+    if (expectedKind === "temperament_pack") importedTemperamentPacks = storedContentPackList(filtered, expectedKind)
+    else importedPresetPacks = storedContentPackList(filtered, expectedKind)
+
+    reconcileSelectedTuningSelections(false)
+    persistWidgetSettings()
+    return true
+  }
+
+  function removeSelectedPresetPack() {
+    var pack = presetPackByPresetId(selectedPresetId)
+    if (!pack || String(pack.source || "") !== "imported") return false
+
+    removeImportedContentPack(pack.id, "preset_pack")
+    contentPackTransferStatusText = "Removed preset pack '" + String(pack.label || pack.id || "pack") + "'."
+    contentPackTransferStatusError = false
+    return true
+  }
+
+  function removeSelectedTemperamentPack() {
+    var pack = temperamentPackByTemperamentId(selectedTemperamentId)
+    if (!pack || String(pack.source || "") !== "imported") return false
+
+    removeImportedContentPack(pack.id, "temperament_pack")
+    contentPackTransferStatusText = "Removed temperament pack '" + String(pack.label || pack.id || "pack") + "'."
+    contentPackTransferStatusError = false
+    return true
+  }
+
+  function existingPresetIdConflict(pack) {
+    var groups = Array.isArray(pack && pack.groups) ? pack.groups : []
+
+    for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+      var presets = Array.isArray(groups[groupIndex].presets) ? groups[groupIndex].presets : []
+      for (var presetIndex = 0; presetIndex < presets.length; presetIndex++) {
+        var presetId = normalizeStableId(presets[presetIndex].id, "")
+        var existingPreset = presetById(presetId)
+        if (presetId !== "" && existingPreset && normalizeStableId(existingPreset.id, "") === presetId)
+          return presetId
+      }
+    }
+
+    return ""
+  }
+
+  function existingTemperamentIdConflict(pack) {
+    var temperaments = Array.isArray(pack && pack.temperaments) ? pack.temperaments : []
+
+    for (var index = 0; index < temperaments.length; index++) {
+      var temperamentId = normalizeStableId(temperaments[index].id, "")
+      var existingTemperament = temperamentById(temperamentId)
+      if (temperamentId !== "" && existingTemperament && normalizeStableId(existingTemperament.id, "") === temperamentId)
+        return temperamentId
+    }
+
+    return ""
+  }
+
+  function contentPackConflictMessage(pack) {
+    var packId = normalizeStableId(pack && pack.id, "")
+    if (packId === "") return "Import failed: normalized pack is missing an id."
+
+    for (var presetPackIndex = 0; presetPackIndex < allPresetPacks.length; presetPackIndex++)
+      if (normalizeStableId(allPresetPacks[presetPackIndex].id, "") === packId)
+        return "Import failed: pack id '" + packId + "' is already installed."
+
+    for (var temperamentPackIndex = 0; temperamentPackIndex < allTemperamentPacks.length; temperamentPackIndex++)
+      if (normalizeStableId(allTemperamentPacks[temperamentPackIndex].id, "") === packId)
+        return "Import failed: pack id '" + packId + "' is already installed."
+
+    if (String(pack.kind || "") === "preset_pack") {
+      var presetConflict = existingPresetIdConflict(pack)
+      if (presetConflict !== "")
+        return "Import failed: preset id '" + presetConflict + "' is already installed."
+    }
+
+    if (String(pack.kind || "") === "temperament_pack") {
+      var temperamentConflict = existingTemperamentIdConflict(pack)
+      if (temperamentConflict !== "")
+        return "Import failed: temperament id '" + temperamentConflict + "' is already installed."
+    }
+
+    return ""
+  }
+
+  function startContentPackImport(text) {
+    var trimmed = String(text || "").trim()
+    if (contentPackTransferBusy) return false
+    if (trimmed === "") {
+      contentPackTransferStatusText = "Import failed: paste a preset or temperament pack JSON object."
+      contentPackTransferStatusError = true
+      return false
+    }
+
+    pendingContentPackJson = trimmed
+    contentPackToolStdout = ""
+    contentPackToolStderr = ""
+    contentPackTransferStatusText = "Importing content pack..."
+    contentPackTransferStatusError = false
+    contentPackTransferBusy = true
+    contentPackToolProc.running = true
+    return true
+  }
+
   function loadPersistedSettings() {
     applyNormalizedSettings(normalizedSettingsObject(root.settings || ({})), false)
+    if (builtInPresetPacks.length > 0 || builtInTemperamentPacks.length > 0)
+      reconcileSelectedTuningSelections(false)
   }
 
   function setReferenceA(value) {
@@ -1450,6 +1972,16 @@ BarWidget {
 
     noteSpelling = next
     persistWidgetSettings()
+  }
+
+  function setSelectedTemperamentId(value) {
+    var next = temperamentById(value).id
+    if (next === selectedTemperamentId) return
+
+    rememberCurrentQuickSwitch()
+    selectedTemperamentId = next
+    persistWidgetSettings()
+    syncSelectedTemperamentWithHelper()
   }
 
   function setReferencePlaybackMode(value) {
@@ -2140,7 +2672,86 @@ BarWidget {
     }
   }
 
-  Component.onCompleted: loadPersistedSettings()
+  function handleTuningLibraryStdout(rawLine) {
+    var line = String(rawLine || "").trim()
+    if (line !== "") tuningLibraryStdout = line
+  }
+
+  function handleTuningLibraryStderr(rawLine) {
+    var line = String(rawLine || "").trim()
+    if (line !== "") tuningLibraryStderr = line
+  }
+
+  function handleTuningLibraryExit(exitCode) {
+    if (Number(exitCode) !== 0) {
+      tuningLibraryLoadError = tuningLibraryStderr !== ""
+        ? tuningLibraryStderr
+        : "Unable to load the built-in tuning library."
+      return
+    }
+
+    var library = parseJsonObject(tuningLibraryStdout)
+    if (!applyBuiltInTuningLibrary(library)) {
+      tuningLibraryLoadError = "Unable to parse the built-in tuning library output."
+      return
+    }
+  }
+
+  function handleContentPackToolStdout(rawLine) {
+    var line = String(rawLine || "").trim()
+    if (line !== "") contentPackToolStdout = line
+  }
+
+  function handleContentPackToolStderr(rawLine) {
+    var line = String(rawLine || "").trim()
+    if (line !== "") contentPackToolStderr = line
+  }
+
+  function handleContentPackToolExit(exitCode) {
+    contentPackTransferBusy = false
+
+    if (Number(exitCode) !== 0) {
+      contentPackTransferStatusText = contentPackToolStderr !== ""
+        ? contentPackToolStderr
+        : "Import failed: the helper rejected the content pack."
+      contentPackTransferStatusError = true
+      return
+    }
+
+    var pack = parseJsonObject(contentPackToolStdout)
+    if (!pack || typeof pack.kind !== "string") {
+      contentPackTransferStatusText = "Import failed: helper output did not contain a normalized content pack."
+      contentPackTransferStatusError = true
+      return
+    }
+
+    var conflictMessage = contentPackConflictMessage(pack)
+    if (conflictMessage !== "") {
+      contentPackTransferStatusText = conflictMessage
+      contentPackTransferStatusError = true
+      return
+    }
+
+    if (pack.kind === "temperament_pack") {
+      importedTemperamentPacks = storedContentPackList(importedTemperamentPacks.concat([pack]), "temperament_pack")
+      syncSelectedTemperamentWithHelper()
+    } else if (pack.kind === "preset_pack") {
+      importedPresetPacks = storedContentPackList(importedPresetPacks.concat([pack]), "preset_pack")
+    } else {
+      contentPackTransferStatusText = "Import failed: helper returned an unsupported content pack kind."
+      contentPackTransferStatusError = true
+      return
+    }
+
+    persistWidgetSettings()
+    contentPackTransferStatusText = "Imported " + String(pack.label || pack.id || "content pack") + "."
+    contentPackTransferStatusError = false
+  }
+
+  Component.onCompleted: {
+    loadPersistedSettings()
+    loadBuiltInTuningLibrary()
+  }
 
   onBarChanged: injectPopup()
   onSettingsChanged: loadPersistedSettings()
@@ -2190,6 +2801,32 @@ BarWidget {
     id: helperRestartTimer
     interval: root.helperRestartDelayMs
     onTriggered: root.startHelper(root.helperRecoveryPending)
+  }
+
+  Process {
+    id: tuningLibraryProc
+    running: false
+    command: root.tuningLibraryCommand
+    onExited: function(exitCode, exitStatus) { root.handleTuningLibraryExit(exitCode) }
+    stdout: SplitParser {
+      onRead: function(line) { root.handleTuningLibraryStdout(line) }
+    }
+    stderr: SplitParser {
+      onRead: function(line) { root.handleTuningLibraryStderr(line) }
+    }
+  }
+
+  Process {
+    id: contentPackToolProc
+    running: false
+    command: root.contentPackToolCommand
+    onExited: function(exitCode, exitStatus) { root.handleContentPackToolExit(exitCode) }
+    stdout: SplitParser {
+      onRead: function(line) { root.handleContentPackToolStdout(line) }
+    }
+    stderr: SplitParser {
+      onRead: function(line) { root.handleContentPackToolStderr(line) }
+    }
   }
 
   Process {

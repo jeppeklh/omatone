@@ -12,6 +12,7 @@ FocusScope {
   property bool popoutSwitchClosing: false
   property string configTransferStatusText: ""
   property bool configTransferStatusError: false
+  property string contentPackTransferText: ""
   property string activeDestination: "tune"
 
   readonly property color foreground: root.bar ? root.bar.foreground : Color.foreground
@@ -106,6 +107,21 @@ FocusScope {
     configTransferStatusError = result.ok !== true
     if (result.ok && "text" in result)
       configTransferEditor.text = String(result.text || "")
+  }
+
+  function loadSelectedPresetPackText() {
+    if (!hostWidget) return
+    contentPackTransferEditor.text = hostWidget.exportedSelectedPresetPackJson()
+  }
+
+  function loadSelectedTemperamentPackText() {
+    if (!hostWidget) return
+    contentPackTransferEditor.text = hostWidget.exportedSelectedTemperamentPackJson()
+  }
+
+  function applyImportedContentPackText() {
+    if (!hostWidget) return
+    hostWidget.startContentPackImport(contentPackTransferEditor.text)
   }
 
   function focusInitialControl() {
@@ -288,6 +304,18 @@ FocusScope {
     sequence: "6"
     enabled: root.opened && !!root.hostWidget && root.hostWidget.selectedPresetNotes.length >= 6
     onActivated: root.hostWidget.playPresetNoteAt(5)
+  }
+
+  Shortcut {
+    sequence: "7"
+    enabled: root.opened && !!root.hostWidget && root.hostWidget.selectedPresetNotes.length >= 7
+    onActivated: root.hostWidget.playPresetNoteAt(6)
+  }
+
+  Shortcut {
+    sequence: "8"
+    enabled: root.opened && !!root.hostWidget && root.hostWidget.selectedPresetNotes.length >= 8
+    onActivated: root.hostWidget.playPresetNoteAt(7)
   }
 
   Shortcut {
@@ -632,22 +660,22 @@ FocusScope {
 
               Repeater {
                 id: quickNoteRepeater
-                model: root.hostWidget ? root.hostWidget.selectedPresetNotes.slice(0, 6) : []
+                model: root.hostWidget ? root.hostWidget.selectedPresetTargets : []
 
                 Button {
                   required property var modelData
                   required property int index
 
                   width: (quickNoteGrid.width - quickNoteGrid.columnSpacing * Math.max(0, quickNoteGrid.columns - 1)) / Math.max(1, quickNoteGrid.columns)
-                  text: root.hostWidget ? ((index + 1) + "  " + root.hostWidget.displayNoteLabel(String(modelData))) : String(modelData)
-                  selected: root.hostWidget ? root.hostWidget.sameNoteText(root.hostWidget.selectedReferenceCommandNoteLabel, String(modelData)) : false
+                  text: root.hostWidget ? ((index + 1) + "  " + root.hostWidget.presetTargetDisplayLabel(modelData)) : String(modelData)
+                  selected: root.hostWidget ? root.hostWidget.sameNoteText(root.hostWidget.selectedReferenceCommandNoteLabel, String(modelData.note || "")) : false
                   bordered: true
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   verticalPadding: Style.space(8)
                   focusable: true
-                  onClicked: if (root.hostWidget) root.hostWidget.playReferenceNoteString(String(modelData))
+                  onClicked: if (root.hostWidget) root.hostWidget.playReferenceNoteString(String(modelData.note || ""))
                 }
               }
             }
@@ -786,6 +814,232 @@ FocusScope {
             id: expandedContent
             width: parent.width
             spacing: Style.space(10)
+
+            PanelSeparator {
+              foreground: root.foreground
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Temperament"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: root.hostWidget
+                ? "Temperaments apply one Rust-owned pitch model across detection and reference tones while keeping A4 fixed at the selected calibration."
+                : ""
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Repeater {
+              model: root.hostWidget ? root.hostWidget.temperamentPackSections : []
+
+              Column {
+                required property var modelData
+
+                width: parent.width
+                spacing: Style.space(6)
+
+                Text {
+                  width: parent.width
+                  textFormat: Text.PlainText
+                  text: String(modelData.label || "")
+                  color: root.foreground
+                  opacity: root.secondaryTextOpacity
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Flow {
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  Repeater {
+                    model: Array.isArray(modelData.temperaments) ? modelData.temperaments : []
+
+                    Button {
+                      required property var modelData
+
+                      text: String(modelData.label || "")
+                      selected: root.hostWidget ? root.hostWidget.selectedTemperamentId === String(modelData.id || "") : false
+                      bordered: true
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.bodySmall
+                      verticalPadding: Style.space(7)
+                      focusable: true
+                      onClicked: if (root.hostWidget) root.hostWidget.setSelectedTemperamentId(String(modelData.id || ""))
+                    }
+                  }
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.selectedTemperamentDescription !== "" : false
+              textFormat: Text.PlainText
+              text: root.hostWidget ? root.hostWidget.selectedTemperamentDescription : ""
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Content packs"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: root.hostWidget && root.hostWidget.tuningLibraryLoadError !== ""
+                ? root.hostWidget.tuningLibraryLoadError
+                : "Load the selected preset or temperament pack into the editor, or paste a shared pack JSON object to import it."
+              color: root.hostWidget && root.hostWidget.tuningLibraryLoadError !== "" ? Color.urgent : root.quietTextColor
+              opacity: root.hostWidget && root.hostWidget.tuningLibraryLoadError !== "" ? 1.0 : root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                text: "Load preset pack"
+                width: Math.max(Style.space(118), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: root.loadSelectedPresetPackText()
+              }
+
+              Button {
+                text: "Load temperament pack"
+                width: Math.max(Style.space(148), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: root.loadSelectedTemperamentPackText()
+              }
+
+              Button {
+                text: root.hostWidget && root.hostWidget.contentPackTransferBusy ? "Importing..." : "Apply pack import"
+                width: Math.max(Style.space(126), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                enabled: root.hostWidget ? !root.hostWidget.contentPackTransferBusy : false
+                opacity: enabled ? 1.0 : 0.5
+                onClicked: root.applyImportedContentPackText()
+              }
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+              visible: root.hostWidget
+                ? ((root.hostWidget.presetPackByPresetId(root.hostWidget.selectedPresetId)
+                    && root.hostWidget.presetPackByPresetId(root.hostWidget.selectedPresetId).source === "imported")
+                  || (root.hostWidget.temperamentPackByTemperamentId(root.hostWidget.selectedTemperamentId)
+                    && root.hostWidget.temperamentPackByTemperamentId(root.hostWidget.selectedTemperamentId).source === "imported"))
+                : false
+
+              Button {
+                visible: root.hostWidget
+                  ? (root.hostWidget.presetPackByPresetId(root.hostWidget.selectedPresetId)
+                    && root.hostWidget.presetPackByPresetId(root.hostWidget.selectedPresetId).source === "imported")
+                  : false
+                text: "Remove preset pack"
+                width: Math.max(Style.space(126), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.removeSelectedPresetPack()
+              }
+
+              Button {
+                visible: root.hostWidget
+                  ? (root.hostWidget.temperamentPackByTemperamentId(root.hostWidget.selectedTemperamentId)
+                    && root.hostWidget.temperamentPackByTemperamentId(root.hostWidget.selectedTemperamentId).source === "imported")
+                  : false
+                text: "Remove temperament pack"
+                width: Math.max(Style.space(152), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.removeSelectedTemperamentPack()
+              }
+            }
+
+            Rectangle {
+              width: parent.width
+              implicitHeight: Math.max(Style.space(180), contentPackTransferEditor.contentHeight + Style.space(16))
+              radius: Style.cornerRadius
+              color: Util.alpha(root.foreground, root.highContrast ? 0.10 : 0.05)
+              border.width: 1
+              border.color: Util.alpha(root.foreground, root.highContrast ? 0.48 : 0.22)
+
+              TextEdit {
+                id: contentPackTransferEditor
+                anchors.fill: parent
+                anchors.margins: Style.space(8)
+                text: root.contentPackTransferText
+                color: root.foreground
+                font.family: "monospace"
+                font.pixelSize: Style.font.caption
+                wrapMode: TextEdit.WrapAnywhere
+                selectByMouse: true
+                selectByKeyboard: true
+                persistentSelection: true
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.contentPackTransferStatusText !== "" : false
+              textFormat: Text.PlainText
+              text: root.hostWidget ? root.hostWidget.contentPackTransferStatusText : ""
+              color: root.hostWidget && root.hostWidget.contentPackTransferStatusError ? Color.urgent : Color.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
 
             PanelSeparator {
               foreground: root.foreground
