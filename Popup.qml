@@ -26,15 +26,6 @@ FocusScope {
   readonly property int quickNoteColumns: verticalBar ? 2 : 3
   readonly property int presetColumns: verticalBar ? 1 : 2
   readonly property int referenceGridColumns: verticalBar ? 3 : 4
-  readonly property color quietTextColor: highContrast ? root.foreground : Qt.darker(root.foreground, 1.3)
-  readonly property real secondaryTextOpacity: highContrast ? 0.92 : 0.74
-  readonly property string keyboardHintText: root.hostWidget ? root.hostWidget.keyboardShortcutSummary : ""
-  readonly property string quickTuneHintText: {
-    if (!root.hostWidget) return ""
-    if (root.hostWidget.referencePlaybackMode === "drone") return "Quick notes use the current drone scene."
-    if (root.hostWidget.referencePlaybackMode === "chord") return "Quick notes use the current chord scene."
-    return ""
-  }
   readonly property var popupDestinations: [
     { value: "tune", label: "Tune" },
     { value: "reference", label: "Reference" },
@@ -390,17 +381,6 @@ FocusScope {
             font.bold: true
           }
 
-          Text {
-            width: parent.width
-            visible: root.hostWidget ? root.hostWidget.selectedPresetLabel !== "" : false
-            textFormat: Text.PlainText
-            text: root.hostWidget ? root.hostWidget.selectedPresetLabel : ""
-            color: root.foreground
-            opacity: root.secondaryTextOpacity
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
-          }
         }
 
         Rectangle {
@@ -494,7 +474,6 @@ FocusScope {
                 textFormat: Text.PlainText
                 text: "FLAT"
                 color: root.foreground
-                opacity: root.secondaryTextOpacity
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: root.highContrast
@@ -505,7 +484,6 @@ FocusScope {
                 textFormat: Text.PlainText
                 text: "OK"
                 color: root.foreground
-                opacity: root.secondaryTextOpacity
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
@@ -518,7 +496,6 @@ FocusScope {
                 textFormat: Text.PlainText
                 text: "SHARP"
                 color: root.foreground
-                opacity: root.secondaryTextOpacity
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: root.highContrast
@@ -618,37 +595,12 @@ FocusScope {
 
             Text {
               width: parent.width
-              visible: root.hostWidget ? root.hostWidget.statusText !== "" : false
-              textFormat: Text.PlainText
-              text: root.hostWidget ? root.hostWidget.statusText : ""
-              color: root.hostWidget && root.hostWidget.hasAlert ? Color.urgent : root.foreground
-              opacity: root.hostWidget && root.hostWidget.hasAlert ? 1.0 : root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              font.bold: root.highContrast && root.hostWidget && root.hostWidget.pitchActive
-              wrapMode: Text.WordWrap
-            }
-
-            Text {
-              width: parent.width
               textFormat: Text.PlainText
               text: root.hostWidget ? root.hostWidget.quickTuneHeadingText : "Quick tune"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               font.bold: true
-            }
-
-            Text {
-              width: parent.width
-              visible: quickTuneHintText !== ""
-              textFormat: Text.PlainText
-              text: quickTuneHintText
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
             }
 
             Grid {
@@ -702,17 +654,6 @@ FocusScope {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   font.bold: true
-                }
-
-                Text {
-                  width: parent.width
-                  textFormat: Text.PlainText
-                  text: root.hostWidget ? root.hostWidget.pitchAnalysisSummaryText : ""
-                  color: root.quietTextColor
-                  opacity: root.secondaryTextOpacity
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  wrapMode: Text.WordWrap
                 }
 
                 Rectangle {
@@ -783,7 +724,6 @@ FocusScope {
                     textFormat: Text.PlainText
                     text: "Play a steady note"
                     color: root.foreground
-                    opacity: root.secondaryTextOpacity
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                   }
@@ -846,7 +786,6 @@ FocusScope {
               textFormat: Text.PlainText
               text: "Favorites"
               color: root.foreground
-              opacity: root.secondaryTextOpacity
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -883,7 +822,6 @@ FocusScope {
               textFormat: Text.PlainText
               text: "Recents"
               color: root.foreground
-              opacity: root.secondaryTextOpacity
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -913,17 +851,6 @@ FocusScope {
               }
             }
 
-            Text {
-              width: parent.width
-              visible: root.hostWidget ? root.hostWidget.detailText !== "" : false
-              textFormat: Text.PlainText
-              text: root.hostWidget ? root.hostWidget.detailText : ""
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
           }
         }
 
@@ -951,19 +878,6 @@ FocusScope {
               font.bold: true
             }
 
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: root.hostWidget
-                ? "Temperaments apply one Rust-owned pitch model across detection and reference tones while keeping A4 fixed at the selected calibration."
-                : ""
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
             Repeater {
               model: root.hostWidget ? root.hostWidget.temperamentPackSections : []
 
@@ -977,11 +891,10 @@ FocusScope {
                   width: parent.width
                   textFormat: Text.PlainText
                   text: String(modelData.label || "")
-                  color: root.foreground
-                  opacity: root.secondaryTextOpacity
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
                 }
 
                 Flow {
@@ -1009,18 +922,6 @@ FocusScope {
               }
             }
 
-            Text {
-              width: parent.width
-              visible: root.hostWidget ? root.hostWidget.selectedTemperamentDescription !== "" : false
-              textFormat: Text.PlainText
-              text: root.hostWidget ? root.hostWidget.selectedTemperamentDescription : ""
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
             PanelSeparator {
               foreground: root.foreground
             }
@@ -1037,12 +938,10 @@ FocusScope {
 
             Text {
               width: parent.width
+              visible: root.hostWidget ? root.hostWidget.tuningLibraryLoadError !== "" : false
               textFormat: Text.PlainText
-              text: root.hostWidget && root.hostWidget.tuningLibraryLoadError !== ""
-                ? root.hostWidget.tuningLibraryLoadError
-                : "Load the selected preset or temperament pack into the editor, or paste a shared pack JSON object to import it."
-              color: root.hostWidget && root.hostWidget.tuningLibraryLoadError !== "" ? Color.urgent : root.quietTextColor
-              opacity: root.hostWidget && root.hostWidget.tuningLibraryLoadError !== "" ? 1.0 : root.secondaryTextOpacity
+              text: root.hostWidget ? root.hostWidget.tuningLibraryLoadError : ""
+              color: Color.urgent
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
@@ -1191,7 +1090,6 @@ FocusScope {
                   textFormat: Text.PlainText
                   text: String(modelData.label || "")
                   color: root.foreground
-                  opacity: root.secondaryTextOpacity
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -1663,18 +1561,8 @@ FocusScope {
                 }
               }
 
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                text: root.hostWidget ? root.hostWidget.metronomeHintText : ""
-                color: root.quietTextColor
-                opacity: root.secondaryTextOpacity
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-              }
-            }
           }
+        }
         }
 
         Item {
@@ -1790,7 +1678,7 @@ FocusScope {
             Toggle {
               width: parent.width
               label: "High contrast"
-              description: "Use stronger borders and text emphasis for legibility across themes."
+              description: ""
               checked: root.hostWidget ? root.hostWidget.highContrastMode : false
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -1800,7 +1688,7 @@ FocusScope {
             Toggle {
               width: parent.width
               label: "Reduced motion"
-              description: "Keep the meter and card transitions calmer while preserving tuner responsiveness."
+              description: ""
               checked: root.hostWidget ? root.hostWidget.reducedMotionMode : false
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -1810,7 +1698,7 @@ FocusScope {
             Toggle {
               width: parent.width
               label: "Analysis views"
-              description: "Show helper-owned confidence, lock-hold state, and a recent cents trace below Quick tune."
+              description: ""
               checked: root.hostWidget ? root.hostWidget.analysisViewsEnabled : false
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -1860,18 +1748,6 @@ FocusScope {
               font.bold: true
             }
 
-            Text {
-              width: parent.width
-              visible: keyboardHintText !== ""
-              textFormat: Text.PlainText
-              text: keyboardHintText
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
             PanelSeparator {
               foreground: root.foreground
             }
@@ -1886,34 +1762,10 @@ FocusScope {
               font.bold: true
             }
 
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: root.hostWidget
-                ? ("IPC target: " + root.hostWidget.moduleName + ". JSON commands stay live-only unless you change settings in the UI.")
-                : ""
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: root.hostWidget ? root.hostWidget.externalControlStatusText : ""
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
             Toggle {
               width: parent.width
               label: "MIDI input"
-              description: root.hostWidget ? root.hostWidget.midiInputStatusText : ""
+              description: ""
               checked: root.hostWidget ? root.hostWidget.midiInputEnabled : false
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -1973,19 +1825,6 @@ FocusScope {
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               font.bold: true
-            }
-
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: root.hostWidget
-                ? "Transposition shifts detected note labels and reference labels together."
-                : ""
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
             }
 
             Flow {
@@ -2061,17 +1900,6 @@ FocusScope {
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               font.bold: true
-            }
-
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: "Export or import JSON settings."
-              color: root.quietTextColor
-              opacity: root.secondaryTextOpacity
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
             }
 
             Flow {
