@@ -183,7 +183,7 @@ fn helper_cli_help_is_stable() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--temperament-offsets-cents <csv>] [--help] [--version]\n       omatune-helper --dump-tuning-library\n       omatune-helper --normalize-content-pack <json>\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within 400.0..=480.0 Hz\n  --transposition-semitones <n>  Set startup transposition within -12..=12 semitones\n  --temperament-offsets-cents    Set startup pitch-class offsets as 12 comma-separated cents values\n  --dump-tuning-library          Print the built-in temperament and preset library as JSON and exit\n  --normalize-content-pack <json>  Normalize one preset or temperament pack JSON object and exit\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit\n"
+        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--temperament-offsets-cents <csv>] [--help] [--version]\n       omatune-helper --dump-tuning-library\n       omatune-helper --normalize-content-pack <json>\n       omatune-helper --list-midi-inputs\n       omatune-helper --listen-midi-input <port>\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within 400.0..=480.0 Hz\n  --transposition-semitones <n>  Set startup transposition within -12..=12 semitones\n  --temperament-offsets-cents    Set startup pitch-class offsets as 12 comma-separated cents values\n  --dump-tuning-library          Print the built-in temperament and preset library as JSON and exit\n  --normalize-content-pack <json>  Normalize one preset or temperament pack JSON object and exit\n  --list-midi-inputs             Print available MIDI input port names as JSON and exit\n  --listen-midi-input <port>     Emit external-control NDJSON for one MIDI input port\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit\n"
     );
     assert_eq!(String::from_utf8(output.stderr).unwrap(), "");
 }
@@ -233,6 +233,64 @@ fn launcher_fails_clearly_for_non_executable_override() {
     assert!(String::from_utf8(output.stderr)
         .unwrap()
         .contains("OMATUNE_HELPER_BIN is set but not executable"));
+}
+
+#[test]
+fn helper_lists_midi_input_ports_in_mock_mode() {
+    let output = Command::new(helper_bin())
+        .arg("--list-midi-inputs")
+        .env("OMATUNE_TEST_MIDI_PORTS", "Launchkey Mini|Digital Piano")
+        .output()
+        .expect("failed to run helper --list-midi-inputs");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[\"Launchkey Mini\",\"Digital Piano\"]\n"
+    );
+    assert_eq!(String::from_utf8(output.stderr).unwrap(), "");
+}
+
+#[test]
+fn helper_emits_external_control_commands_for_mock_midi_note_input() {
+    let output = Command::new(helper_bin())
+        .arg("--listen-midi-input")
+        .arg("Launchkey Mini")
+        .env("OMATUNE_TEST_MIDI_PORTS", "Launchkey Mini")
+        .env("OMATUNE_TEST_MIDI_NOTES", "9,12,69,119,120")
+        .output()
+        .expect("failed to run helper --listen-midi-input");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        concat!(
+            r#"{"type":"select_reference","note":"C0"}"#,
+            "\n",
+            r#"{"type":"select_reference","note":"A4"}"#,
+            "\n",
+            r#"{"type":"select_reference","note":"B8"}"#,
+            "\n"
+        )
+    );
+    assert_eq!(String::from_utf8(output.stderr).unwrap(), "");
+}
+
+#[test]
+fn helper_reports_missing_mock_midi_port_clearly() {
+    let output = Command::new(helper_bin())
+        .arg("--listen-midi-input")
+        .arg("Missing Port")
+        .env("OMATUNE_TEST_MIDI_PORTS", "Launchkey Mini")
+        .env("OMATUNE_TEST_MIDI_NOTES", "69")
+        .output()
+        .expect("failed to run helper --listen-midi-input with bad port");
+
+    assert!(!output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "");
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("unknown MIDI input port 'Missing Port'"));
 }
 
 #[test]

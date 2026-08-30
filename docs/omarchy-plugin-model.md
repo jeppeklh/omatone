@@ -52,6 +52,8 @@ For Omatune Phase 1:
 
 -   `moduleName` should match the manifest id;
 -   the bar widget owns helper lifecycle state from the UI side;
+-   a bar widget can also own an `IpcHandler` target for shell-level
+    interoperability when `allowMultiple` is false;
 -   the widget starts and stops one persistent helper process rather than
     polling with repeated short-lived commands.
 
@@ -120,6 +122,15 @@ Additional Phase 3 helper checks:
 ```bash
 cargo run --quiet --bin omatune-helper <<< '{"type":"play_tone","note":"A4"}'
 cargo run --quiet --bin omatune-helper <<< $'{"type":"play_tone","note":"A4"}\n{"type":"stop_tone"}'
+cargo run --quiet --bin omatune-helper -- --list-midi-inputs
+```
+
+Confirmed Quickshell IPC invocation pattern:
+
+```bash
+quickshell ipc -p "$OMARCHY_PATH/shell" call shell ping
+quickshell ipc -p "$OMARCHY_PATH/shell" call jeppeklh.omatune ping
+quickshell ipc -p "$OMARCHY_PATH/shell" call jeppeklh.omatune control '{"type":"play_reference","note":"A4"}'
 ```
 
 Additional Phase 4 helper check:
@@ -150,6 +161,8 @@ The helper contract remains:
 -   Use a root-level `manifest.json` plus `BarWidget.qml` entry point.
 -   Keep the plugin as a `bar-widget`, not a full custom bar.
 -   Launch the helper from QML with one persistent `Process`.
+-   Expose Phase 3 external control through Quickshell IPC instead of a
+    plugin-local socket or QML-state scraping contract.
 -   Keep the Rust helper as a separate executable boundary from the UI.
 -   Use a shell launcher only as a bootstrap layer while the compiled
     helper packaging is still unresolved.

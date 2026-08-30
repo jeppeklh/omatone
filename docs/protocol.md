@@ -17,6 +17,9 @@ The helper performs both directions of audio work:
 The protocol is intentionally small so the audio implementation and UI
 can evolve independently.
 
+For Phase 3 Omarchy IPC control and optional MIDI integration, see
+`docs/external-control.md`.
+
 ## Transport
 
 Use newline-delimited JSON (NDJSON).
@@ -46,12 +49,19 @@ Supported flags:
     library as JSON and exits;
 -   `--normalize-content-pack <json>` validates and normalizes one preset
     or temperament pack JSON object and exits;
+-   `--list-midi-inputs` prints available MIDI input port names as a JSON
+    array and exits;
+-   `--listen-midi-input <port>` listens to one MIDI input port and
+    writes external-control NDJSON commands to stdout;
 -   `-h`, `--help` print usage text and exit without starting audio;
 -   `-V`, `--version` print the helper version and exit without starting
     audio.
 
 `--help`, `--version`, `--dump-tuning-library`, and
-`--normalize-content-pack` are the documented non-protocol stdout modes.
+`--normalize-content-pack` are the documented non-helper-protocol stdout
+modes. `--listen-midi-input` also uses stdout, but it emits the separate
+external-control NDJSON described in `docs/external-control.md` rather
+than helper UI messages.
 
 ## Helper -\> UI Messages
 

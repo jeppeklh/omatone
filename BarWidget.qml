@@ -1,3 +1,4 @@
+import Quickshell
 import QtQuick
 import Quickshell.Io
 import qs.Commons
@@ -74,6 +75,20 @@ BarWidget {
   property string contentPackToolStderr: ""
   property string tuningLibraryStdout: ""
   property string tuningLibraryStderr: ""
+  property bool midiInputEnabled: false
+  property string midiInputPortName: ""
+  property var availableMidiInputPorts: []
+  property bool midiInputPortsLoaded: false
+  property string midiInputPortsLoadError: ""
+  property string midiInputPortsStdout: ""
+  property string midiInputPortsStderr: ""
+  property string midiInputListenerExpectedPortName: ""
+  property bool midiInputListenerRestartPending: false
+  property string midiInputListenerLastStderr: ""
+  property string midiInputListenerError: ""
+  property string lastExternalControlSource: ""
+  property string lastExternalControlSummary: ""
+  property string lastExternalControlError: ""
 
   readonly property int minimumReferenceMidiNumber: 12
   readonly property int maximumReferenceMidiNumber: 119
@@ -86,7 +101,7 @@ BarWidget {
   readonly property int maximumReferenceIntervalSemitones: 24
   readonly property int maximumFavoriteQuickSwitches: 6
   readonly property int maximumRecentQuickSwitches: 6
-  readonly property int settingsConfigVersion: 3
+  readonly property int settingsConfigVersion: 4
   readonly property int helperRecoveryMaxAttempts: 5
   readonly property int defaultMetronomeBpm: 100
   readonly property int defaultMetronomeBeatsPerBar: 4
@@ -193,6 +208,7 @@ BarWidget {
   readonly property bool currentQuickSwitchFavorite: indexOfQuickSwitchScene(favoriteQuickSwitches, currentQuickSwitchScene()) >= 0
   readonly property var visibleRecentQuickSwitches: recentQuickSwitchesForDisplay()
   readonly property bool hasQuickSwitches: favoriteQuickSwitches.length > 0 || visibleRecentQuickSwitches.length > 0
+  readonly property bool midiInputConfigured: midiInputEnabled && normalizeMidiInputPortName(midiInputPortName) !== ""
   readonly property string transpositionLabelText: formatTranspositionLabel(transpositionSemitones)
   readonly property string selectedReferenceCommandNoteLabel: formatMidiNote(selectedReferenceMidiNumber, "sharps")
   readonly property string selectedReferenceNoteLabel: formatMidiNote(selectedReferenceMidiNumber, noteSpelling)
@@ -305,6 +321,36 @@ BarWidget {
   ]
   readonly property var tuningLibraryCommand: ["bash", helperScriptPath, "--dump-tuning-library"]
   readonly property var contentPackToolCommand: ["bash", helperScriptPath, "--normalize-content-pack", pendingContentPackJson]
+  readonly property var midiInputPortsCommand: ["bash", helperScriptPath, "--list-midi-inputs"]
+  readonly property var midiInputListenCommand: ["bash", helperScriptPath, "--listen-midi-input", normalizeMidiInputPortName(midiInputPortName)]
+  readonly property string externalControlStatusText: {
+    if (midiInputListenerError !== "") return midiInputListenerError
+    if (midiInputConfigured && midiListenerProc.running) return "MIDI input active on " + midiInputPortName + "."
+    if (lastExternalControlError !== "")
+      return (lastExternalControlSource !== "" ? (lastExternalControlSource + ": ") : "") + lastExternalControlError
+    if (lastExternalControlSummary !== "")
+      return (lastExternalControlSource !== "" ? (lastExternalControlSource + ": ") : "") + lastExternalControlSummary
+    if (midiInputEnabled && !midiInputConfigured) {
+      if (midiInputPortsLoadError !== "") return midiInputPortsLoadError
+      if (midiInputPortsLoaded && availableMidiInputPorts.length === 0) return "No MIDI input ports found."
+      return "Choose a MIDI input port to enable note control."
+    }
+    if (midiInputPortsLoadError !== "") return midiInputPortsLoadError
+    return "IPC target: " + moduleName
+  }
+  readonly property string midiInputStatusText: {
+    if (midiInputListenerError !== "") return midiInputListenerError
+    if (midiInputConfigured && midiListenerProc.running)
+      return "Listening on " + midiInputPortName + ". Note-on events select the concert-pitch root and retune active playback."
+    if (midiInputEnabled && !midiInputConfigured) {
+      if (midiInputPortsLoadError !== "") return midiInputPortsLoadError
+      if (midiInputPortsLoaded && availableMidiInputPorts.length === 0) return "No MIDI input ports found."
+      return "Choose a MIDI input port."
+    }
+    if (midiInputPortsLoadError !== "") return midiInputPortsLoadError
+    if (midiInputPortsLoaded && availableMidiInputPorts.length === 0) return "No MIDI input ports found."
+    return "Off. Enable one MIDI input to drive the current reference selection."
+  }
   readonly property string readoutTitleText: {
     if (helperRecoveryPending) return "Recovering audio"
     if (pitchActive) return detectedNoteLabel
@@ -526,6 +572,10 @@ BarWidget {
   function normalizeStableId(value, fallback) {
     var text = String(value || "").trim().toLowerCase()
     return text !== "" ? text : String(fallback || "")
+  }
+
+  function normalizeMidiInputPortName(value) {
+    return String(value || "").trim()
   }
 
   function normalizedTemperamentOffsets(values) {
@@ -817,6 +867,74 @@ BarWidget {
     var text = String(value || "")
     if (text === "drone" || text === "chord") return text
     return "single"
+  }
+
+  function parseExactIntegerField(commandObject, commandType, fieldName) {
+    if (!(fieldName in commandObject)) {
+      return {
+        ok: true,
+        present: false,
+        value: 0,
+      }
+    }
+
+    var numeric = Number(commandObject[fieldName])
+    if (!isFinite(numeric) || Math.round(numeric) !== numeric) {
+      return {
+        ok: false,
+        message: commandType + " field '" + fieldName + "' must be an integer",
+      }
+    }
+
+    return {
+      ok: true,
+      present: true,
+      value: Math.round(numeric),
+    }
+  }
+
+  function exactReferencePlaybackMode(value) {
+    var text = String(value || "")
+    if (text === "single" || text === "drone" || text === "chord") return text
+    return ""
+  }
+
+  function exactReferenceSceneId(value) {
+    var text = String(value || "")
+    if (text === "") return ""
+
+    var preset = referenceScenePresetById(text)
+    return preset && String(preset.id || "") === text ? text : ""
+  }
+
+  function exactReferenceIntervalSemitones(value) {
+    var numeric = Number(value)
+    if (!isFinite(numeric) || Math.round(numeric) !== numeric) return null
+
+    var preset = intervalPresetBySemitones(numeric)
+    return preset && preset.semitones === Math.round(numeric) ? preset.semitones : null
+  }
+
+  function exactReferenceChordId(value) {
+    var text = String(value || "")
+    if (text === "") return ""
+
+    var preset = chordPresetById(text)
+    return preset && String(preset.id || "") === text ? text : ""
+  }
+
+  function exactMetronomeMeter(beatsPerBar, beatUnit) {
+    var numericBeatsPerBar = Number(beatsPerBar)
+    var numericBeatUnit = Number(beatUnit)
+    if (!isFinite(numericBeatsPerBar) || Math.round(numericBeatsPerBar) !== numericBeatsPerBar) return null
+    if (!isFinite(numericBeatUnit) || Math.round(numericBeatUnit) !== numericBeatUnit) return null
+
+    var preset = metronomeMeterPresetByValues(numericBeatsPerBar, numericBeatUnit)
+    return preset
+      && preset.beatsPerBar === Math.round(numericBeatsPerBar)
+      && preset.beatUnit === Math.round(numericBeatUnit)
+      ? preset
+      : null
   }
 
   function indexOfReferenceScenePreset(value) {
@@ -1674,6 +1792,8 @@ BarWidget {
       metronomeBeatsPerBar: metronomePreset.beatsPerBar,
       metronomeBeatUnit: metronomePreset.beatUnit,
       metronomeSubdivision: normalizeMetronomeSubdivision(source.metronomeSubdivision),
+      midiInputEnabled: normalizeBooleanSetting(source.midiInputEnabled, false),
+      midiInputPortName: normalizeMidiInputPortName(source.midiInputPortName),
       highContrastMode: normalizeBooleanSetting(source.highContrastMode, false),
       reducedMotionMode: normalizeBooleanSetting(source.reducedMotionMode, false),
       favoriteQuickSwitches: filteredQuickSwitchSceneList(source.favoriteQuickSwitches, null, maximumFavoriteQuickSwitches),
@@ -1699,6 +1819,8 @@ BarWidget {
       metronomeBeatsPerBar: metronomeBeatsPerBar,
       metronomeBeatUnit: metronomeBeatUnit,
       metronomeSubdivision: metronomeSubdivision,
+      midiInputEnabled: midiInputEnabled,
+      midiInputPortName: midiInputPortName,
       highContrastMode: highContrastMode,
       reducedMotionMode: reducedMotionMode,
       favoriteQuickSwitches: favoriteQuickSwitches,
@@ -1733,6 +1855,8 @@ BarWidget {
     var previousMetronomeBeatsPerBar = metronomeBeatsPerBar
     var previousMetronomeBeatUnit = metronomeBeatUnit
     var previousMetronomeSubdivision = metronomeSubdivision
+    var previousMidiInputEnabled = midiInputEnabled
+    var previousMidiInputPortName = normalizeMidiInputPortName(midiInputPortName)
     var previousReferenceState = quickSwitchReferenceStateFingerprint(currentQuickSwitchScene())
     var selectedMidiNumber = parseNoteMidiNumber(settings.selectedReferenceNote)
 
@@ -1750,6 +1874,8 @@ BarWidget {
     metronomeBeatsPerBar = settings.metronomeBeatsPerBar
     metronomeBeatUnit = settings.metronomeBeatUnit
     metronomeSubdivision = settings.metronomeSubdivision
+    midiInputEnabled = settings.midiInputEnabled
+    midiInputPortName = settings.midiInputPortName
     highContrastMode = settings.highContrastMode
     reducedMotionMode = settings.reducedMotionMode
     favoriteQuickSwitches = settings.favoriteQuickSwitches
@@ -1788,6 +1914,10 @@ BarWidget {
         && (helperWanted || helperProcessStarted || helperProc.running)) {
       queueHelperCommand(metronomeStartCommand())
     }
+
+    if (midiInputEnabled !== previousMidiInputEnabled
+        || normalizeMidiInputPortName(midiInputPortName) !== previousMidiInputPortName)
+      syncMidiInputListener()
   }
 
   function importConfigurationJson(text) {
@@ -1855,6 +1985,415 @@ BarWidget {
 
     if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
       root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  function externalControlResult(ok, message) {
+    return {
+      ok: ok === true,
+      message: String(message || ""),
+    }
+  }
+
+  function recordExternalControlSuccess(sourceLabel, message) {
+    lastExternalControlSource = String(sourceLabel || "external")
+    lastExternalControlSummary = String(message || "ok")
+    lastExternalControlError = ""
+    return externalControlResult(true, lastExternalControlSummary)
+  }
+
+  function recordExternalControlFailure(sourceLabel, message) {
+    lastExternalControlSource = String(sourceLabel || "external")
+    lastExternalControlSummary = ""
+    lastExternalControlError = String(message || "invalid external control command")
+    return externalControlResult(false, lastExternalControlError)
+  }
+
+  function parseExternalReferenceNoteField(commandObject, commandType) {
+    if (!("note" in commandObject)) {
+      return {
+        ok: true,
+        present: false,
+        midiNumber: 69,
+        noteText: "",
+      }
+    }
+
+    if (typeof commandObject.note !== "string") {
+      return {
+        ok: false,
+        message: commandType + " field 'note' must be a string",
+      }
+    }
+
+    var noteText = String(commandObject.note || "").trim()
+    var midiNumber = parseNoteMidiNumber(noteText)
+    if (midiNumber === null) {
+      return {
+        ok: false,
+        message: "invalid note '" + noteText + "'",
+      }
+    }
+
+    return {
+      ok: true,
+      present: true,
+      midiNumber: midiNumber,
+      noteText: formatMidiNote(midiNumber, "sharps"),
+    }
+  }
+
+  function applyExternalReferenceCommand(commandObject, sourceLabel, shouldPlay) {
+    var commandType = shouldPlay ? "play_reference" : "select_reference"
+    var noteField = parseExternalReferenceNoteField(commandObject, commandType)
+    if (!noteField.ok) return recordExternalControlFailure(sourceLabel, noteField.message)
+
+    var playbackModeProvided = "playback_mode" in commandObject
+    var sceneIdProvided = "scene_id" in commandObject
+    var chordIdProvided = "chord_id" in commandObject
+    var intervalField = parseExactIntegerField(commandObject, commandType, "interval_semitones")
+    if (!intervalField.ok) return recordExternalControlFailure(sourceLabel, intervalField.message)
+
+    if (!shouldPlay && !noteField.present && !playbackModeProvided && !sceneIdProvided && !intervalField.present && !chordIdProvided) {
+      return recordExternalControlFailure(
+        sourceLabel,
+        "select_reference requires at least one of: note, playback_mode, scene_id, interval_semitones, chord_id"
+      )
+    }
+
+    var nextPlaybackMode = referencePlaybackMode
+    if (playbackModeProvided) {
+      if (typeof commandObject.playback_mode !== "string")
+        return recordExternalControlFailure(sourceLabel, commandType + " field 'playback_mode' must be a string")
+
+      nextPlaybackMode = exactReferencePlaybackMode(commandObject.playback_mode)
+      if (nextPlaybackMode === "") {
+        return recordExternalControlFailure(
+          sourceLabel,
+          commandType + " field 'playback_mode' must be one of: single, drone, chord"
+        )
+      }
+    } else if (chordIdProvided) nextPlaybackMode = "chord"
+    else if (intervalField.present) nextPlaybackMode = "drone"
+
+    if (intervalField.present && chordIdProvided) {
+      return recordExternalControlFailure(
+        sourceLabel,
+        commandType + " cannot combine interval_semitones and chord_id"
+      )
+    }
+    if (intervalField.present && nextPlaybackMode === "single") {
+      return recordExternalControlFailure(sourceLabel, "single playback does not accept interval_semitones")
+    }
+    if (chordIdProvided && nextPlaybackMode === "single") {
+      return recordExternalControlFailure(sourceLabel, "single playback does not accept chord_id")
+    }
+    if (chordIdProvided && nextPlaybackMode === "drone") {
+      return recordExternalControlFailure(sourceLabel, "drone playback does not accept chord_id")
+    }
+    if (intervalField.present && nextPlaybackMode === "chord") {
+      return recordExternalControlFailure(sourceLabel, "chord playback does not accept interval_semitones")
+    }
+
+    var nextSceneId = selectedReferenceSceneId
+    if (sceneIdProvided) {
+      if (typeof commandObject.scene_id !== "string")
+        return recordExternalControlFailure(sourceLabel, commandType + " field 'scene_id' must be a string")
+
+      nextSceneId = exactReferenceSceneId(commandObject.scene_id)
+      if (nextSceneId === "")
+        return recordExternalControlFailure(sourceLabel, commandType + " field 'scene_id' must be one of: blend, pedal")
+    }
+
+    var nextIntervalSemitones = selectedReferenceIntervalSemitones
+    if (intervalField.present) {
+      var exactIntervalSemitones = exactReferenceIntervalSemitones(intervalField.value)
+      if (exactIntervalSemitones === null) {
+        return recordExternalControlFailure(
+          sourceLabel,
+          commandType + " field 'interval_semitones' must be one of: 3, 4, 5, 7, 12"
+        )
+      }
+      nextIntervalSemitones = exactIntervalSemitones
+    }
+
+    var nextChordId = selectedReferenceChordId
+    if (chordIdProvided) {
+      if (typeof commandObject.chord_id !== "string")
+        return recordExternalControlFailure(sourceLabel, commandType + " field 'chord_id' must be a string")
+
+      nextChordId = exactReferenceChordId(commandObject.chord_id)
+      if (nextChordId === "")
+        return recordExternalControlFailure(sourceLabel, commandType + " field 'chord_id' must be one of: major, minor, sus2, sus4")
+    }
+
+    var displayedMidiNumber = noteField.present
+      ? shiftedMidiNumber(noteField.midiNumber, transpositionSemitones)
+      : selectedReferenceMidiNumber
+    if (noteField.present
+        && (displayedMidiNumber < minimumDisplayedReferenceMidiNumber
+        || displayedMidiNumber > maximumDisplayedReferenceMidiNumber)) {
+      return recordExternalControlFailure(
+        sourceLabel,
+        "note " + noteField.noteText + " is outside the supported range for transposition " + formatSignedSemitoneOffset(transpositionSemitones)
+      )
+    }
+
+    var intervals = referenceSelectionIntervals(nextPlaybackMode, nextIntervalSemitones, nextChordId)
+    if (!referenceSceneIsValid(displayedMidiNumber, transpositionSemitones, intervals, nextSceneId))
+      return recordExternalControlFailure(sourceLabel, "requested reference scene is outside the supported note range")
+
+    // External control stays live-only so MIDI note streams and IPC triggers do not rewrite shell.json on every action.
+    applyReferenceSelection({
+      midiNumber: displayedMidiNumber,
+      playbackMode: nextPlaybackMode,
+      sceneId: nextSceneId,
+      intervalSemitones: nextIntervalSemitones,
+      chordId: nextChordId,
+    })
+
+    if (shouldPlay || toneActive) playSelectedTone()
+
+    if (shouldPlay) return recordExternalControlSuccess(sourceLabel, "Playing " + selectedReferencePlaybackLabel)
+    if (toneActive) return recordExternalControlSuccess(sourceLabel, "Retuned " + selectedReferencePlaybackLabel)
+    return recordExternalControlSuccess(sourceLabel, "Selected " + selectedReferencePlaybackLabel)
+  }
+
+  function applyExternalPresetCommand(commandObject, sourceLabel) {
+    if (typeof commandObject.preset_id !== "string")
+      return recordExternalControlFailure(sourceLabel, "select_preset requires string field 'preset_id'")
+
+    var requestedPresetId = normalizeStableId(commandObject.preset_id, "")
+    if (requestedPresetId === "")
+      return recordExternalControlFailure(sourceLabel, "select_preset requires non-empty string field 'preset_id'")
+
+    var preset = presetById(requestedPresetId)
+    if (!preset || normalizeStableId(preset.id, "") !== requestedPresetId)
+      return recordExternalControlFailure(sourceLabel, "unknown preset id '" + requestedPresetId + "'")
+
+    selectedPresetId = preset.id
+    return recordExternalControlSuccess(sourceLabel, "Selected preset " + selectedPresetLabel)
+  }
+
+  function applyExternalStartMetronomeCommand(commandObject, sourceLabel) {
+    var bpmField = parseExactIntegerField(commandObject, "start_metronome", "bpm")
+    if (!bpmField.ok) return recordExternalControlFailure(sourceLabel, bpmField.message)
+    var beatsPerBarField = parseExactIntegerField(commandObject, "start_metronome", "beats_per_bar")
+    if (!beatsPerBarField.ok) return recordExternalControlFailure(sourceLabel, beatsPerBarField.message)
+    var beatUnitField = parseExactIntegerField(commandObject, "start_metronome", "beat_unit")
+    if (!beatUnitField.ok) return recordExternalControlFailure(sourceLabel, beatUnitField.message)
+    var subdivisionField = parseExactIntegerField(commandObject, "start_metronome", "subdivision")
+    if (!subdivisionField.ok) return recordExternalControlFailure(sourceLabel, subdivisionField.message)
+
+    var nextBpm = bpmField.present ? bpmField.value : metronomeBpm
+    if (nextBpm < minimumMetronomeBpm || nextBpm > maximumMetronomeBpm)
+      return recordExternalControlFailure(sourceLabel, "start_metronome field 'bpm' must be within 20..=300")
+
+    var nextBeatsPerBar = beatsPerBarField.present ? beatsPerBarField.value : metronomeBeatsPerBar
+    var nextBeatUnit = beatUnitField.present ? beatUnitField.value : metronomeBeatUnit
+    var meterPreset = exactMetronomeMeter(nextBeatsPerBar, nextBeatUnit)
+    if ((beatsPerBarField.present || beatUnitField.present) && !meterPreset) {
+      return recordExternalControlFailure(
+        sourceLabel,
+        "supported metronome meters are 2/4, 3/4, 4/4, and 6/8"
+      )
+    }
+    if (!meterPreset) meterPreset = metronomeMeterPresetByValues(nextBeatsPerBar, nextBeatUnit)
+
+    var nextSubdivision = subdivisionField.present ? subdivisionField.value : metronomeSubdivision
+    if (nextSubdivision !== normalizeMetronomeSubdivision(nextSubdivision))
+      return recordExternalControlFailure(sourceLabel, "start_metronome field 'subdivision' must be within 1..=4")
+
+    metronomeBpm = nextBpm
+    metronomeBeatsPerBar = meterPreset.beatsPerBar
+    metronomeBeatUnit = meterPreset.beatUnit
+    metronomeSubdivision = nextSubdivision
+    queueHelperCommand(metronomeStartCommand())
+
+    return recordExternalControlSuccess(
+      sourceLabel,
+      "Started metronome at " + metronomeBpm + " BPM | " + metronomeMeterLabel + " | " + metronomeSubdivisionLabel
+    )
+  }
+
+  function applyExternalControlCommandObject(commandObject, sourceLabel) {
+    if (!commandObject || typeof commandObject !== "object" || Array.isArray(commandObject))
+      return recordExternalControlFailure(sourceLabel, "command must be a JSON object")
+    if (typeof commandObject.type !== "string")
+      return recordExternalControlFailure(sourceLabel, "missing string field 'type'")
+
+    var commandType = String(commandObject.type || "")
+    if (commandType === "select_reference") return applyExternalReferenceCommand(commandObject, sourceLabel, false)
+    if (commandType === "play_reference") return applyExternalReferenceCommand(commandObject, sourceLabel, true)
+    if (commandType === "stop_reference") {
+      stopTone()
+      return recordExternalControlSuccess(sourceLabel, "Stopped reference playback")
+    }
+    if (commandType === "select_preset") return applyExternalPresetCommand(commandObject, sourceLabel)
+    if (commandType === "start_metronome") return applyExternalStartMetronomeCommand(commandObject, sourceLabel)
+    if (commandType === "stop_metronome") {
+      stopMetronome()
+      return recordExternalControlSuccess(sourceLabel, "Stopped metronome")
+    }
+
+    return recordExternalControlFailure(sourceLabel, "unknown command type '" + commandType + "'")
+  }
+
+  function applyExternalControlJson(rawText, sourceLabel) {
+    var commandObject = parseJsonObject(rawText)
+    if (!commandObject)
+      return recordExternalControlFailure(sourceLabel, "command must be one JSON object")
+
+    return applyExternalControlCommandObject(commandObject, sourceLabel)
+  }
+
+  function normalizeMidiInputPortList(values) {
+    if (!Array.isArray(values)) return []
+
+    var normalized = []
+    var seen = {}
+    for (var index = 0; index < values.length; index++) {
+      var portName = normalizeMidiInputPortName(values[index])
+      if (portName === "" || seen[portName]) continue
+      normalized.push(portName)
+      seen[portName] = true
+    }
+
+    return normalized
+  }
+
+  function loadMidiInputPorts() {
+    if (midiInputPortsProc.running) return
+
+    midiInputPortsLoaded = false
+    midiInputPortsLoadError = ""
+    midiInputPortsStdout = ""
+    midiInputPortsStderr = ""
+    midiInputPortsProc.running = true
+  }
+
+  function setMidiInputEnabled(value) {
+    var next = !!value
+    var previousPortName = normalizeMidiInputPortName(midiInputPortName)
+    if (next && previousPortName === "" && availableMidiInputPorts.length > 0)
+      midiInputPortName = normalizeMidiInputPortName(availableMidiInputPorts[0])
+
+    if (next === midiInputEnabled && normalizeMidiInputPortName(midiInputPortName) === previousPortName) {
+      syncMidiInputListener()
+      return
+    }
+
+    midiInputEnabled = next
+    if (!midiInputEnabled) midiInputListenerError = ""
+    persistWidgetSettings()
+    syncMidiInputListener()
+  }
+
+  function toggleMidiInputEnabled() {
+    setMidiInputEnabled(!midiInputEnabled)
+  }
+
+  function setMidiInputPortName(value) {
+    var next = normalizeMidiInputPortName(value)
+    if (next === normalizeMidiInputPortName(midiInputPortName)) {
+      syncMidiInputListener()
+      return
+    }
+
+    midiInputPortName = next
+    midiInputListenerError = ""
+    persistWidgetSettings()
+    syncMidiInputListener()
+  }
+
+  function syncMidiInputListener() {
+    var targetPortName = normalizeMidiInputPortName(midiInputPortName)
+    var shouldRun = midiInputEnabled && targetPortName !== ""
+
+    if (!shouldRun) {
+      midiInputListenerRestartPending = false
+      midiInputListenerExpectedPortName = ""
+      midiInputListenerLastStderr = ""
+      if (midiListenerProc.running) midiListenerProc.running = false
+      return
+    }
+
+    if (midiListenerProc.running) {
+      if (midiInputListenerExpectedPortName === targetPortName) return
+
+      midiInputListenerRestartPending = true
+      midiInputListenerExpectedPortName = ""
+      midiListenerProc.running = false
+      return
+    }
+
+    midiInputListenerRestartPending = false
+    midiInputListenerExpectedPortName = targetPortName
+    midiInputListenerLastStderr = ""
+    midiInputListenerError = ""
+    midiListenerProc.running = true
+  }
+
+  function handleMidiInputPortsStdout(rawLine) {
+    var line = String(rawLine || "").trim()
+    if (line !== "") midiInputPortsStdout = line
+  }
+
+  function handleMidiInputPortsStderr(rawLine) {
+    var line = String(rawLine || "").trim()
+    if (line !== "") midiInputPortsStderr = line
+  }
+
+  function handleMidiInputPortsExit(exitCode) {
+    midiInputPortsLoaded = true
+    if (Number(exitCode) !== 0) {
+      availableMidiInputPorts = []
+      midiInputPortsLoadError = midiInputPortsStderr !== ""
+        ? midiInputPortsStderr
+        : "Unable to list MIDI input ports."
+      return
+    }
+
+    var ports = parseJsonObject(midiInputPortsStdout)
+    if (!Array.isArray(ports)) {
+      availableMidiInputPorts = []
+      midiInputPortsLoadError = "Unable to parse MIDI input port list."
+      return
+    }
+
+    availableMidiInputPorts = normalizeMidiInputPortList(ports)
+    midiInputPortsLoadError = ""
+  }
+
+  function handleMidiListenerStdout(rawLine) {
+    var line = String(rawLine || "").trim()
+    if (line === "") return
+
+    var result = applyExternalControlJson(line, "midi")
+    if (!result.ok) midiInputListenerError = result.message
+  }
+
+  function handleMidiListenerStderr(rawLine) {
+    var line = String(rawLine || "").trim()
+    if (line !== "") midiInputListenerLastStderr = line
+  }
+
+  function handleMidiListenerExit(exitCode) {
+    var exitedPortName = midiInputListenerExpectedPortName
+    midiInputListenerExpectedPortName = ""
+
+    if (midiInputListenerRestartPending) {
+      midiInputListenerRestartPending = false
+      Qt.callLater(syncMidiInputListener)
+      return
+    }
+
+    if (!midiInputEnabled || normalizeMidiInputPortName(midiInputPortName) === "") return
+
+    if (exitCode !== 0 || exitedPortName !== "") {
+      midiInputListenerError = midiInputListenerLastStderr !== ""
+        ? midiInputListenerLastStderr
+        : "MIDI input listener exited unexpectedly."
+    }
   }
 
   function storedContentPackList(values, expectedKind) {
@@ -3098,6 +3637,7 @@ BarWidget {
   Component.onCompleted: {
     loadPersistedSettings()
     loadBuiltInTuningLibrary()
+    loadMidiInputPorts()
   }
 
   onBarChanged: injectPopup()
@@ -3111,6 +3651,17 @@ BarWidget {
     onLoaded: {
       root.injectPopup()
       Qt.callLater(root.injectPopup)
+    }
+  }
+
+  IpcHandler {
+    target: root.moduleName
+
+    function ping(): string { return "ok" }
+
+    function control(commandJson: string): string {
+      var result = root.applyExternalControlJson(commandJson, "ipc")
+      return result.ok ? result.message : ("error: " + result.message)
     }
   }
 
@@ -3173,6 +3724,32 @@ BarWidget {
     }
     stderr: SplitParser {
       onRead: function(line) { root.handleContentPackToolStderr(line) }
+    }
+  }
+
+  Process {
+    id: midiInputPortsProc
+    running: false
+    command: root.midiInputPortsCommand
+    onExited: function(exitCode, exitStatus) { root.handleMidiInputPortsExit(exitCode) }
+    stdout: SplitParser {
+      onRead: function(line) { root.handleMidiInputPortsStdout(line) }
+    }
+    stderr: SplitParser {
+      onRead: function(line) { root.handleMidiInputPortsStderr(line) }
+    }
+  }
+
+  Process {
+    id: midiListenerProc
+    running: false
+    command: root.midiInputListenCommand
+    onExited: function(exitCode, exitStatus) { root.handleMidiListenerExit(exitCode) }
+    stdout: SplitParser {
+      onRead: function(line) { root.handleMidiListenerStdout(line) }
+    }
+    stderr: SplitParser {
+      onRead: function(line) { root.handleMidiListenerStderr(line) }
     }
   }
 

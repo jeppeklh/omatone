@@ -14,6 +14,8 @@ pub enum HelperCliAction {
     Run(StartupConfig),
     DumpTuningLibrary,
     NormalizeContentPack { json: String },
+    ListMidiInputs,
+    ListenMidiInput { port_name: String },
     PrintHelp,
     PrintVersion,
 }
@@ -251,6 +253,22 @@ where
     {
         return parse_normalize_content_pack_cli(&remaining_args);
     }
+    if matches!(
+        remaining_args.first().map(String::as_str),
+        Some("--list-midi-inputs")
+    ) {
+        return parse_list_midi_inputs_cli(&remaining_args);
+    }
+    if matches!(
+        remaining_args.first().map(String::as_str),
+        Some("--listen-midi-input")
+    ) || remaining_args
+        .first()
+        .map(|argument| argument.starts_with("--listen-midi-input="))
+        .unwrap_or(false)
+    {
+        return parse_listen_midi_input_cli(&remaining_args);
+    }
 
     let mut config = StartupConfig::default();
     let mut args = remaining_args.into_iter();
@@ -337,6 +355,44 @@ fn parse_normalize_content_pack_cli(
     }
 
     Ok(HelperCliAction::NormalizeContentPack { json: json.clone() })
+}
+
+fn parse_list_midi_inputs_cli(args: &[String]) -> Result<HelperCliAction, StartupConfigError> {
+    if args.len() > 1 {
+        return Err(StartupConfigError::ToolUnexpectedArgument(args[1].clone()));
+    }
+
+    Ok(HelperCliAction::ListMidiInputs)
+}
+
+fn parse_listen_midi_input_cli(args: &[String]) -> Result<HelperCliAction, StartupConfigError> {
+    let first_argument = args
+        .first()
+        .map(String::as_str)
+        .ok_or(StartupConfigError::ToolMissingValue("--listen-midi-input"))?;
+
+    if let Some(value) = first_argument.strip_prefix("--listen-midi-input=") {
+        if args.len() > 1 {
+            return Err(StartupConfigError::ToolUnexpectedArgument(args[1].clone()));
+        }
+        if value.trim().is_empty() {
+            return Err(StartupConfigError::ToolMissingValue("--listen-midi-input"));
+        }
+        return Ok(HelperCliAction::ListenMidiInput {
+            port_name: value.to_owned(),
+        });
+    }
+
+    let port_name = args
+        .get(1)
+        .ok_or(StartupConfigError::ToolMissingValue("--listen-midi-input"))?;
+    if args.len() > 2 {
+        return Err(StartupConfigError::ToolUnexpectedArgument(args[2].clone()));
+    }
+
+    Ok(HelperCliAction::ListenMidiInput {
+        port_name: port_name.clone(),
+    })
 }
 
 fn parse_reference_a_hz_argument(value: &str) -> Result<f64, StartupConfigError> {
@@ -503,6 +559,25 @@ mod tests {
                 json: r#"{"kind":"preset_pack","id":"shared.pack","label":"Pack","groups":[{"id":"guitar","label":"Guitar","presets":[{"id":"shared.one","label":"One","targets":["E2"]}]}]}"#.to_owned(),
             }
         );
+        assert_eq!(
+            parse_helper_cli(vec![
+                "omatune-helper".to_owned(),
+                "--list-midi-inputs".to_owned(),
+            ])
+            .unwrap(),
+            HelperCliAction::ListMidiInputs
+        );
+        assert_eq!(
+            parse_helper_cli(vec![
+                "omatune-helper".to_owned(),
+                "--listen-midi-input".to_owned(),
+                "Launchkey Mini".to_owned(),
+            ])
+            .unwrap(),
+            HelperCliAction::ListenMidiInput {
+                port_name: "Launchkey Mini".to_owned(),
+            }
+        );
     }
 
     #[test]
@@ -582,6 +657,14 @@ mod tests {
             ])
             .unwrap_err(),
             StartupConfigError::ToolMissingValue("--normalize-content-pack")
+        );
+        assert_eq!(
+            parse_helper_cli(vec![
+                "omatune-helper".to_owned(),
+                "--listen-midi-input".to_owned(),
+            ])
+            .unwrap_err(),
+            StartupConfigError::ToolMissingValue("--listen-midi-input")
         );
     }
 }

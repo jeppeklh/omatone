@@ -3,7 +3,7 @@
 ## Purpose
 
 This document defines the persisted user-facing configuration introduced
-in Phase 1 and extended in Phase 2.
+in Phase 1, extended in Phase 2, and extended again in Phase 3.
 
 It covers:
 
@@ -25,7 +25,7 @@ For a bar widget instance, the entry shape is:
 ```json
 {
   "id": "jeppeklh.omatune",
-  "configVersion": 3,
+  "configVersion": 4,
   "referenceAHz": 440.0,
   "transpositionSemitones": 0,
   "noteSpelling": "sharps",
@@ -40,6 +40,8 @@ For a bar widget instance, the entry shape is:
   "metronomeBeatsPerBar": 4,
   "metronomeBeatUnit": 4,
   "metronomeSubdivision": 1,
+  "midiInputEnabled": false,
+  "midiInputPortName": "",
   "highContrastMode": false,
   "reducedMotionMode": false,
   "favoriteQuickSwitches": [],
@@ -55,7 +57,7 @@ settings file.
 
 ## Supported Fields
 
--   `configVersion`: integer schema version. Current value: `3`.
+-   `configVersion`: integer schema version. Current value: `4`.
 -   `referenceAHz`: reference A frequency in Hz.
 -   `transpositionSemitones`: integer semitone offset from sounding pitch
     to displayed/selected note names.
@@ -71,6 +73,10 @@ settings file.
 -   `metronomeBeatsPerBar`: last selected metronome meter numerator.
 -   `metronomeBeatUnit`: last selected metronome meter denominator.
 -   `metronomeSubdivision`: last selected per-beat subdivision count.
+-   `midiInputEnabled`: whether the optional MIDI input listener should
+    run.
+-   `midiInputPortName`: selected MIDI input port name for the optional
+    listener.
 -   `highContrastMode`: boolean display-preference flag.
 -   `reducedMotionMode`: boolean display-preference flag.
 -   `favoriteQuickSwitches`: bounded list of saved workflow snapshots.
@@ -121,7 +127,7 @@ Pack import and export are separate from the configuration editor.
 
 When no persisted configuration exists, Omatune uses:
 
--   `configVersion = 3`
+-   `configVersion = 4`
 -   `referenceAHz = 440.0`
 -   `transpositionSemitones = 0`
 -   `noteSpelling = "sharps"`
@@ -136,6 +142,8 @@ When no persisted configuration exists, Omatune uses:
 -   `metronomeBeatsPerBar = 4`
 -   `metronomeBeatUnit = 4`
 -   `metronomeSubdivision = 1`
+-   `midiInputEnabled = false`
+-   `midiInputPortName = ""`
 -   `highContrastMode = false`
 -   `reducedMotionMode = false`
 -   `favoriteQuickSwitches = []`
@@ -145,6 +153,10 @@ When no persisted configuration exists, Omatune uses:
 
 The helper does not persist live runtime state such as whether the tuner
 is currently on or whether a tone or metronome is actively playing.
+
+Phase 3 external IPC commands also stay live-only. They update the
+current widget and helper state without rewriting these persisted fields
+on every trigger.
 
 ## Validation Rules
 
@@ -192,6 +204,11 @@ the supported metronome presets:
 -   `6/8`
 
 `metronomeSubdivision` must be an integer within `1..=4`.
+
+`midiInputEnabled` must be a boolean value.
+
+`midiInputPortName` is a trimmed string. An empty string means no MIDI
+input port is selected.
 
 `highContrastMode` and `reducedMotionMode` must be boolean values.
 

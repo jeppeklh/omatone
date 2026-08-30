@@ -23,15 +23,18 @@ Owns:
 -   presentation and layout;
 -   tuner activation/deactivation;
 -   user interaction for note selection and guitar shortcuts;
--   persisted calibration, spelling, and tuning-preset preferences;
+ -   external live-control mapping from Omarchy IPC commands into widget
+    state;
+ -   persisted calibration, spelling, and tuning-preset preferences;
 -   persisted transposition preferences for advanced tuning workflows;
 -   persisted quick-switch favorites and recent workflow snapshots over
     existing tuner state;
 -   persisted metronome BPM, meter, and subdivision preferences;
 -   persisted popup-layout and display-accessibility preferences;
--   helper process lifecycle from the UI side;
--   visual smoothing that does not change pitch correctness;
--   displaying pitch, no-signal, and error states.
+ -   helper process lifecycle from the UI side;
+ -   optional MIDI-listener process lifecycle from the UI side;
+ -   visual smoothing that does not change pitch correctness;
+ -   displaying pitch, no-signal, and error states.
 
 ### Rust Audio Helper
 
@@ -44,9 +47,10 @@ Owns:
 -   metronome timing, beat-accent scheduling, and subdivision pulses;
 -   pitch detection and confidence estimation;
 -   note parsing, normalization, and note/frequency math;
--   validated helper-side reference A configuration;
--   helper-owned transposition-aware target-note interpretation;
--   silence and weak-signal rejection;
+ -   validated helper-side reference A configuration;
+ -   helper-owned transposition-aware target-note interpretation;
+ -   optional MIDI input enumeration and note-listener tool modes;
+ -   silence and weak-signal rejection;
 -   helper protocol I/O;
 -   audio-related error handling.
 
@@ -68,6 +72,8 @@ Output path:
 -   Do not respawn shell commands repeatedly to poll pitch.
 -   stdout is reserved for protocol messages only.
 -   stderr is reserved for diagnostics and logs.
+-   Omatune exposes one Quickshell IPC target, `jeppeklh.omatune`, for
+    higher-level external preset, reference, and transport control.
 -   The helper writes `ready` before allowing the input worker to emit
     `pitch` or `no_signal` messages.
 -   The QML side performs bounded automatic restart attempts after
@@ -80,6 +86,8 @@ Output path:
     `shell.json`; the helper receives the current reference A value at
     startup and can also receive additive runtime updates over the
     protocol.
+-   Optional MIDI note input runs through a separate helper tool mode so
+    missing MIDI support does not block the main tuner/audio-helper path.
 -   Reference-tone playback must not block microphone analysis.
 -   One persistent output worker owns all synthesized playback lanes.
     Reference-tone commands update only the sustained-tone lane; the
@@ -152,6 +160,8 @@ state. It only needs the externally relevant ones defined in
     one, whole-number BPM, and `1x` through `4x` subdivisions.
 -   Prefer a simple, documented helper/UI protocol over tighter coupling.
 -   Favor low latency over unnecessary numerical precision.
+-   External live-control commands are last-writer-wins and do not
+    rewrite persisted settings on every trigger.
 
 ## Decisions To Resolve During Implementation
 

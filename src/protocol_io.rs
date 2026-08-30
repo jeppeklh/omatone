@@ -1,4 +1,5 @@
 use crate::protocol::UiMessage;
+use serde::Serialize;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
@@ -14,9 +15,11 @@ impl ProtocolWriter {
         }
     }
 
-    pub fn write_message(&self, message: &UiMessage) -> io::Result<()> {
-        let json = message
-            .to_json_line()
+    pub fn write_json_line<T>(&self, value: &T) -> io::Result<()>
+    where
+        T: Serialize,
+    {
+        let json = serde_json::to_string(value)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let mut stdout = self
             .stdout
@@ -25,5 +28,9 @@ impl ProtocolWriter {
 
         writeln!(stdout, "{json}")?;
         stdout.flush()
+    }
+
+    pub fn write_message(&self, message: &UiMessage) -> io::Result<()> {
+        self.write_json_line(message)
     }
 }

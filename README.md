@@ -26,6 +26,8 @@ subdivisions, and a beat-one accent.
     boundaries
 -   `docs/configuration.md`: persisted settings schema, defaults, and
     migration rules
+-   `docs/external-control.md`: shell IPC and optional MIDI live-control
+    contract
 -   `docs/omarchy-plugin-model.md`: confirmed Omarchy/Quickshell plugin
     facts and local validation workflow
 -   `docs/preset-packs.md`: shareable preset-pack schema and
@@ -72,6 +74,8 @@ subdivisions, and a beat-one accent.
     summaries
 -   Popup destinations for `Tune`, `Reference`, `Metronome`, `Presets`,
     and `Advanced`
+-   Shell IPC control for live preset, reference, and metronome actions
+-   Optional MIDI note input for retuning the live reference selection
 -   Default `Tune` workflow with immediate `E A D G B E` access and no
     required scrolling
 -   Persisted reference note, metronome tempo/meter/subdivision, tuning
@@ -140,6 +144,10 @@ Documented helper tool modes:
     library as JSON and exit
 -   `--normalize-content-pack <json>`: validate and normalize one preset
     or temperament pack JSON object and exit
+-   `--list-midi-inputs`: print available MIDI input port names as JSON
+    and exit
+-   `--listen-midi-input <port>`: emit external-control NDJSON for one
+    MIDI input port
 
 `scripts/run-helper.sh` resolves the helper in this order:
 

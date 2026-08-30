@@ -4,6 +4,7 @@ use omatune::config::{
     parse_helper_cli, HelperCliAction, SharedConfig, StartupConfig, StartupConfigError,
     MAX_REFERENCE_A_HZ, MIN_REFERENCE_A_HZ,
 };
+use omatune::midi_control::{list_midi_input_ports, listen_midi_input};
 use omatune::note::{MAX_TRANSPOSITION_SEMITONES, MIN_TRANSPOSITION_SEMITONES};
 use omatune::protocol::{parse_command, Command, ErrorCode, UiMessage};
 use omatune::protocol_io::ProtocolWriter;
@@ -40,6 +41,18 @@ fn run() -> io::Result<()> {
                     .map_err(|error| io::Error::other(error.to_string()))?
             );
             Ok(())
+        }
+        Ok(HelperCliAction::ListMidiInputs) => {
+            let ports = list_midi_input_ports()?;
+            println!(
+                "{}",
+                serde_json::to_string(&ports)
+                    .map_err(|error| io::Error::other(error.to_string()))?
+            );
+            Ok(())
+        }
+        Ok(HelperCliAction::ListenMidiInput { port_name }) => {
+            listen_midi_input(&port_name, ProtocolWriter::new())
         }
         Ok(HelperCliAction::PrintHelp) => {
             print_help();
@@ -91,7 +104,7 @@ fn run_helper(startup_config: StartupConfig) -> io::Result<()> {
 
 fn print_help() {
     println!(
-        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--temperament-offsets-cents <csv>] [--help] [--version]\n       omatune-helper --dump-tuning-library\n       omatune-helper --normalize-content-pack <json>\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within {MIN_REFERENCE_A_HZ:.1}..={MAX_REFERENCE_A_HZ:.1} Hz\n  --transposition-semitones <n>  Set startup transposition within {MIN_TRANSPOSITION_SEMITONES}..={MAX_TRANSPOSITION_SEMITONES} semitones\n  --temperament-offsets-cents    Set startup pitch-class offsets as 12 comma-separated cents values\n  --dump-tuning-library          Print the built-in temperament and preset library as JSON and exit\n  --normalize-content-pack <json>  Normalize one preset or temperament pack JSON object and exit\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit"
+        "Usage: omatune-helper [--reference-a-hz <hz>] [--transposition-semitones <n>] [--temperament-offsets-cents <csv>] [--help] [--version]\n       omatune-helper --dump-tuning-library\n       omatune-helper --normalize-content-pack <json>\n       omatune-helper --list-midi-inputs\n       omatune-helper --listen-midi-input <port>\n\nStarts Omatune's NDJSON audio helper.\nReads commands from stdin, writes protocol messages to stdout, and writes diagnostics to stderr.\n\nOptions:\n  --reference-a-hz <hz>          Set startup calibration within {MIN_REFERENCE_A_HZ:.1}..={MAX_REFERENCE_A_HZ:.1} Hz\n  --transposition-semitones <n>  Set startup transposition within {MIN_TRANSPOSITION_SEMITONES}..={MAX_TRANSPOSITION_SEMITONES} semitones\n  --temperament-offsets-cents    Set startup pitch-class offsets as 12 comma-separated cents values\n  --dump-tuning-library          Print the built-in temperament and preset library as JSON and exit\n  --normalize-content-pack <json>  Normalize one preset or temperament pack JSON object and exit\n  --list-midi-inputs             Print available MIDI input port names as JSON and exit\n  --listen-midi-input <port>     Emit external-control NDJSON for one MIDI input port\n  -h, --help                     Print this help text and exit\n  -V, --version                  Print helper version and exit"
     );
 }
 

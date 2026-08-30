@@ -1747,6 +1747,95 @@ FocusScope {
             Text {
               width: parent.width
               textFormat: Text.PlainText
+              text: "External control"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: root.hostWidget
+                ? ("IPC target: " + root.hostWidget.moduleName + ". JSON commands stay live-only unless you change settings in the UI.")
+                : ""
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: root.hostWidget ? root.hostWidget.externalControlStatusText : ""
+              color: root.quietTextColor
+              opacity: root.secondaryTextOpacity
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Toggle {
+              width: parent.width
+              label: "MIDI input"
+              description: root.hostWidget ? root.hostWidget.midiInputStatusText : ""
+              checked: root.hostWidget ? root.hostWidget.midiInputEnabled : false
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: if (root.hostWidget) root.hostWidget.toggleMidiInputEnabled()
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                text: "Refresh MIDI ports"
+                width: Math.max(Style.space(140), implicitWidth)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                focusable: true
+                onClicked: if (root.hostWidget) root.hostWidget.loadMidiInputPorts()
+              }
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.availableMidiInputPorts : []
+
+                Button {
+                  required property var modelData
+
+                  text: String(modelData || "")
+                  selected: root.hostWidget
+                    ? root.hostWidget.normalizeMidiInputPortName(root.hostWidget.midiInputPortName) === String(modelData || "")
+                    : false
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  verticalPadding: Style.space(7)
+                  focusable: true
+                  onClicked: if (root.hostWidget) root.hostWidget.setMidiInputPortName(String(modelData || ""))
+                }
+              }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
               text: "Advanced tuning"
               color: root.foreground
               font.family: root.fontFamily

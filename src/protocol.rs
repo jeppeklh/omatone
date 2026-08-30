@@ -20,6 +20,110 @@ pub enum Command {
     StopMetronome,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalReferencePlaybackMode {
+    Single,
+    Drone,
+    Chord,
+}
+
+impl ExternalReferencePlaybackMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "single" => Some(Self::Single),
+            "drone" => Some(Self::Drone),
+            "chord" => Some(Self::Chord),
+            _ => None,
+        }
+    }
+
+    pub fn supported_ids() -> &'static [&'static str] {
+        &["single", "drone", "chord"]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalReferenceChordId {
+    Major,
+    Minor,
+    Sus2,
+    Sus4,
+}
+
+impl ExternalReferenceChordId {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "major" => Some(Self::Major),
+            "minor" => Some(Self::Minor),
+            "sus2" => Some(Self::Sus2),
+            "sus4" => Some(Self::Sus4),
+            _ => None,
+        }
+    }
+
+    pub fn supported_ids() -> &'static [&'static str] {
+        &["major", "minor", "sus2", "sus4"]
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ExternalControlCommand {
+    SelectReference {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<Note>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        playback_mode: Option<ExternalReferencePlaybackMode>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scene_id: Option<ReferenceToneSceneId>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        interval_semitones: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chord_id: Option<ExternalReferenceChordId>,
+    },
+    PlayReference {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<Note>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        playback_mode: Option<ExternalReferencePlaybackMode>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scene_id: Option<ReferenceToneSceneId>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        interval_semitones: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chord_id: Option<ExternalReferenceChordId>,
+    },
+    StopReference,
+    SelectPreset {
+        preset_id: String,
+    },
+    StartMetronome {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        bpm: Option<u16>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        beats_per_bar: Option<u8>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        beat_unit: Option<u8>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        subdivision: Option<u8>,
+    },
+    StopMetronome,
+}
+
+impl ExternalControlCommand {
+    pub fn select_reference(note: Note) -> Self {
+        Self::SelectReference {
+            note: Some(note),
+            playback_mode: None,
+            scene_id: None,
+            interval_semitones: None,
+            chord_id: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ToneVoice {
     pub note: Note,
@@ -94,6 +198,55 @@ impl UiMessage {
         serde_json::to_string(self)
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExternalControlParseError {
+    MalformedJson(String),
+    InvalidCommand(String),
+    InvalidNote(String),
+    InvalidScene(String),
+    InvalidInterval(String),
+    InvalidChord(String),
+    InvalidMetronomeBpm(String),
+    InvalidMetronomeMeter(String),
+    InvalidMetronomeSubdivision(String),
+}
+
+impl fmt::Display for ExternalControlParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExternalControlParseError::MalformedJson(error) => {
+                write!(f, "malformed external control JSON: {error}")
+            }
+            ExternalControlParseError::InvalidCommand(error) => {
+                write!(f, "invalid external control command: {error}")
+            }
+            ExternalControlParseError::InvalidNote(error) => {
+                write!(f, "invalid external control note: {error}")
+            }
+            ExternalControlParseError::InvalidScene(error) => {
+                write!(f, "invalid external control scene: {error}")
+            }
+            ExternalControlParseError::InvalidInterval(error) => {
+                write!(f, "invalid external control interval: {error}")
+            }
+            ExternalControlParseError::InvalidChord(error) => {
+                write!(f, "invalid external control chord: {error}")
+            }
+            ExternalControlParseError::InvalidMetronomeBpm(error) => {
+                write!(f, "invalid external control metronome BPM: {error}")
+            }
+            ExternalControlParseError::InvalidMetronomeMeter(error) => {
+                write!(f, "invalid external control metronome meter: {error}")
+            }
+            ExternalControlParseError::InvalidMetronomeSubdivision(error) => {
+                write!(f, "invalid external control metronome subdivision: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ExternalControlParseError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommandParseError {
@@ -191,6 +344,32 @@ pub fn parse_command(input: &str) -> Result<Command, CommandParseError> {
     }
 }
 
+pub fn parse_external_control_command(
+    input: &str,
+) -> Result<ExternalControlCommand, ExternalControlParseError> {
+    let value: Value = serde_json::from_str(input)
+        .map_err(|error| ExternalControlParseError::MalformedJson(error.to_string()))?;
+    let object = value.as_object().ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand("command must be a JSON object".to_owned())
+    })?;
+
+    let command_type = object.get("type").and_then(Value::as_str).ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand("missing string field 'type'".to_owned())
+    })?;
+
+    match command_type {
+        "select_reference" => parse_external_reference_command(object, false),
+        "play_reference" => parse_external_reference_command(object, true),
+        "stop_reference" => Ok(ExternalControlCommand::StopReference),
+        "select_preset" => parse_external_select_preset_command(object),
+        "start_metronome" => parse_external_start_metronome_command(object),
+        "stop_metronome" => Ok(ExternalControlCommand::StopMetronome),
+        other => Err(ExternalControlParseError::InvalidCommand(format!(
+            "unknown command type '{other}'"
+        ))),
+    }
+}
+
 fn parse_play_tone(object: &Map<String, Value>) -> Result<Command, CommandParseError> {
     let note_text = object.get("note").and_then(Value::as_str).ok_or_else(|| {
         CommandParseError::InvalidCommand("play_tone requires string field 'note'".to_owned())
@@ -204,6 +383,303 @@ fn parse_play_tone(object: &Map<String, Value>) -> Result<Command, CommandParseE
         .map_err(|error| CommandParseError::InvalidCommand(error.to_string()))?;
 
     Ok(Command::PlayTone { scene })
+}
+
+fn parse_external_reference_command(
+    object: &Map<String, Value>,
+    play_reference: bool,
+) -> Result<ExternalControlCommand, ExternalControlParseError> {
+    let note = parse_optional_external_note_field(object, "note")?;
+    let playback_mode = parse_optional_external_playback_mode_field(object, "playback_mode")?;
+    let scene_id = parse_optional_external_scene_id(object, "scene_id")?;
+    let interval_semitones = parse_optional_external_interval_field(object, "interval_semitones")?;
+    let chord_id = parse_optional_external_chord_field(object, "chord_id")?;
+
+    if !play_reference
+        && note.is_none()
+        && playback_mode.is_none()
+        && scene_id.is_none()
+        && interval_semitones.is_none()
+        && chord_id.is_none()
+    {
+        return Err(ExternalControlParseError::InvalidCommand(
+            "select_reference requires at least one of: note, playback_mode, scene_id, interval_semitones, chord_id"
+                .to_owned(),
+        ));
+    }
+
+    let playback_mode = match (playback_mode, interval_semitones, chord_id) {
+        (Some(ExternalReferencePlaybackMode::Single), Some(_), _) => {
+            return Err(ExternalControlParseError::InvalidCommand(
+                "single playback does not accept interval_semitones".to_owned(),
+            ))
+        }
+        (Some(ExternalReferencePlaybackMode::Single), _, Some(_)) => {
+            return Err(ExternalControlParseError::InvalidCommand(
+                "single playback does not accept chord_id".to_owned(),
+            ))
+        }
+        (Some(ExternalReferencePlaybackMode::Drone), _, Some(_)) => {
+            return Err(ExternalControlParseError::InvalidCommand(
+                "drone playback does not accept chord_id".to_owned(),
+            ))
+        }
+        (Some(ExternalReferencePlaybackMode::Chord), Some(_), _) => {
+            return Err(ExternalControlParseError::InvalidCommand(
+                "chord playback does not accept interval_semitones".to_owned(),
+            ))
+        }
+        (None, Some(_), Some(_)) => {
+            return Err(ExternalControlParseError::InvalidCommand(
+                "reference commands cannot combine interval_semitones and chord_id without an explicit playback_mode"
+                    .to_owned(),
+            ))
+        }
+        (None, Some(_), None) => Some(ExternalReferencePlaybackMode::Drone),
+        (None, None, Some(_)) => Some(ExternalReferencePlaybackMode::Chord),
+        (mode, _, _) => mode,
+    };
+
+    let command = if play_reference {
+        ExternalControlCommand::PlayReference {
+            note,
+            playback_mode,
+            scene_id,
+            interval_semitones,
+            chord_id,
+        }
+    } else {
+        ExternalControlCommand::SelectReference {
+            note,
+            playback_mode,
+            scene_id,
+            interval_semitones,
+            chord_id,
+        }
+    };
+
+    Ok(command)
+}
+
+fn parse_external_select_preset_command(
+    object: &Map<String, Value>,
+) -> Result<ExternalControlCommand, ExternalControlParseError> {
+    let preset_id = object
+        .get("preset_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ExternalControlParseError::InvalidCommand(
+                "select_preset requires non-empty string field 'preset_id'".to_owned(),
+            )
+        })?;
+
+    Ok(ExternalControlCommand::SelectPreset {
+        preset_id: preset_id.to_owned(),
+    })
+}
+
+fn parse_external_start_metronome_command(
+    object: &Map<String, Value>,
+) -> Result<ExternalControlCommand, ExternalControlParseError> {
+    let bpm = parse_optional_external_u16_field(object, "start_metronome", "bpm")?;
+    let beats_per_bar =
+        parse_optional_external_u8_field(object, "start_metronome", "beats_per_bar")?;
+    let beat_unit = parse_optional_external_u8_field(object, "start_metronome", "beat_unit")?;
+    let subdivision = parse_optional_external_u8_field(object, "start_metronome", "subdivision")?;
+
+    if let Some(bpm) = bpm {
+        validate_metronome_bpm(bpm)
+            .map_err(|error| ExternalControlParseError::InvalidMetronomeBpm(error.to_string()))?;
+    }
+    if let Some(subdivision) = subdivision {
+        MetronomeState::new(
+            bpm.unwrap_or(120),
+            beats_per_bar.unwrap_or(DEFAULT_METRONOME_BEATS_PER_BAR),
+            beat_unit.unwrap_or(DEFAULT_METRONOME_BEAT_UNIT),
+            subdivision,
+        )
+        .map_err(map_external_metronome_state_error)?;
+    }
+    if let (Some(beats_per_bar), Some(beat_unit)) = (beats_per_bar, beat_unit) {
+        MetronomeState::new(
+            bpm.unwrap_or(120),
+            beats_per_bar,
+            beat_unit,
+            subdivision.unwrap_or(DEFAULT_METRONOME_SUBDIVISION),
+        )
+        .map_err(map_external_metronome_state_error)?;
+    }
+
+    Ok(ExternalControlCommand::StartMetronome {
+        bpm,
+        beats_per_bar,
+        beat_unit,
+        subdivision,
+    })
+}
+
+fn parse_optional_external_note_field(
+    object: &Map<String, Value>,
+    field_name: &str,
+) -> Result<Option<Note>, ExternalControlParseError> {
+    let Some(note_value) = object.get(field_name) else {
+        return Ok(None);
+    };
+
+    let note_text = note_value.as_str().ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand(format!("field '{field_name}' must be a string"))
+    })?;
+
+    let note = note_text
+        .parse::<Note>()
+        .map_err(|error| ExternalControlParseError::InvalidNote(error.to_string()))?;
+    Ok(Some(note))
+}
+
+fn parse_optional_external_playback_mode_field(
+    object: &Map<String, Value>,
+    field_name: &str,
+) -> Result<Option<ExternalReferencePlaybackMode>, ExternalControlParseError> {
+    let Some(playback_mode_value) = object.get(field_name) else {
+        return Ok(None);
+    };
+
+    let playback_mode_text = playback_mode_value.as_str().ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand(format!("field '{field_name}' must be a string"))
+    })?;
+
+    ExternalReferencePlaybackMode::parse(playback_mode_text)
+        .ok_or_else(|| {
+            ExternalControlParseError::InvalidCommand(format!(
+                "field '{field_name}' must be one of: {}",
+                ExternalReferencePlaybackMode::supported_ids().join(", ")
+            ))
+        })
+        .map(Some)
+}
+
+fn parse_optional_external_scene_id(
+    object: &Map<String, Value>,
+    field_name: &str,
+) -> Result<Option<ReferenceToneSceneId>, ExternalControlParseError> {
+    let Some(scene_value) = object.get(field_name) else {
+        return Ok(None);
+    };
+
+    let scene_id = scene_value.as_str().ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand(format!("field '{field_name}' must be a string"))
+    })?;
+
+    ReferenceToneSceneId::parse(scene_id)
+        .ok_or_else(|| {
+            ExternalControlParseError::InvalidScene(format!(
+                "field '{field_name}' must be one of: {}",
+                ReferenceToneSceneId::supported_ids().join(", ")
+            ))
+        })
+        .map(Some)
+}
+
+fn parse_optional_external_interval_field(
+    object: &Map<String, Value>,
+    field_name: &str,
+) -> Result<Option<i32>, ExternalControlParseError> {
+    let Some(interval_value) = object.get(field_name) else {
+        return Ok(None);
+    };
+
+    let interval_semitones = interval_value.as_i64().ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand(format!(
+            "field '{field_name}' must be an integer"
+        ))
+    })?;
+    let interval_semitones = i32::try_from(interval_semitones).map_err(|_| {
+        ExternalControlParseError::InvalidInterval(
+            "interval value is outside the supported integer range".to_owned(),
+        )
+    })?;
+    if !supported_external_interval_semitones().contains(&interval_semitones) {
+        return Err(ExternalControlParseError::InvalidInterval(format!(
+            "field '{field_name}' must be one of: {}",
+            supported_external_interval_semitones()
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+
+    Ok(Some(interval_semitones))
+}
+
+fn parse_optional_external_chord_field(
+    object: &Map<String, Value>,
+    field_name: &str,
+) -> Result<Option<ExternalReferenceChordId>, ExternalControlParseError> {
+    let Some(chord_value) = object.get(field_name) else {
+        return Ok(None);
+    };
+
+    let chord_id = chord_value.as_str().ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand(format!("field '{field_name}' must be a string"))
+    })?;
+
+    ExternalReferenceChordId::parse(chord_id)
+        .ok_or_else(|| {
+            ExternalControlParseError::InvalidChord(format!(
+                "field '{field_name}' must be one of: {}",
+                ExternalReferenceChordId::supported_ids().join(", ")
+            ))
+        })
+        .map(Some)
+}
+
+fn parse_optional_external_u8_field(
+    object: &Map<String, Value>,
+    command_name: &str,
+    field_name: &str,
+) -> Result<Option<u8>, ExternalControlParseError> {
+    let Some(value) = object.get(field_name) else {
+        return Ok(None);
+    };
+
+    let value = value.as_u64().ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand(format!(
+            "{command_name} field '{field_name}' must be an integer"
+        ))
+    })?;
+
+    u8::try_from(value).map(Some).map_err(|_| {
+        ExternalControlParseError::InvalidCommand(format!(
+            "{command_name} field '{field_name}' must be within 0..=255"
+        ))
+    })
+}
+
+fn parse_optional_external_u16_field(
+    object: &Map<String, Value>,
+    command_name: &str,
+    field_name: &str,
+) -> Result<Option<u16>, ExternalControlParseError> {
+    let Some(value) = object.get(field_name) else {
+        return Ok(None);
+    };
+
+    let value = value.as_u64().ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand(format!(
+            "{command_name} field '{field_name}' must be an integer"
+        ))
+    })?;
+
+    u16::try_from(value).map(Some).map_err(|_| {
+        ExternalControlParseError::InvalidMetronomeBpm(format!(
+            "metronome BPM must be within {}..={}",
+            crate::metronome::MIN_METRONOME_BPM,
+            crate::metronome::MAX_METRONOME_BPM
+        ))
+    })
 }
 
 fn parse_scene_id(object: &Map<String, Value>) -> Result<ReferenceToneSceneId, CommandParseError> {
@@ -394,9 +870,31 @@ fn map_metronome_state_error(error: MetronomeStateError) -> CommandParseError {
     }
 }
 
+fn map_external_metronome_state_error(error: MetronomeStateError) -> ExternalControlParseError {
+    match error {
+        MetronomeStateError::InvalidBpm(error) => {
+            ExternalControlParseError::InvalidMetronomeBpm(error.to_string())
+        }
+        MetronomeStateError::InvalidMeter(error) => {
+            ExternalControlParseError::InvalidMetronomeMeter(error.to_string())
+        }
+        MetronomeStateError::InvalidSubdivision(error) => {
+            ExternalControlParseError::InvalidMetronomeSubdivision(error.to_string())
+        }
+    }
+}
+
+fn supported_external_interval_semitones() -> &'static [i32] {
+    &[3, 4, 5, 7, 12]
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_command, Command, CommandParseError, ErrorCode, ToneVoice, UiMessage};
+    use super::{
+        parse_command, parse_external_control_command, Command, CommandParseError, ErrorCode,
+        ExternalControlCommand, ExternalControlParseError, ExternalReferenceChordId,
+        ExternalReferencePlaybackMode, ToneVoice, UiMessage,
+    };
     use crate::metronome::{
         MetronomeState, DEFAULT_METRONOME_BEATS_PER_BAR, DEFAULT_METRONOME_BEAT_UNIT,
     };
@@ -786,6 +1284,151 @@ mod tests {
         assert_eq!(
             CommandParseError::InvalidMetronomeSubdivision("bad".to_owned()).code(),
             ErrorCode::InvalidMetronomeSubdivision
+        );
+    }
+
+    #[test]
+    fn parses_external_reference_commands_and_infers_bounded_scene_state() {
+        assert_eq!(
+            parse_external_control_command(
+                r#"{"type":"select_reference","note":"Bb3","interval_semitones":12}"#
+            )
+            .unwrap(),
+            ExternalControlCommand::SelectReference {
+                note: Some("A#3".parse().unwrap()),
+                playback_mode: Some(ExternalReferencePlaybackMode::Drone),
+                scene_id: None,
+                interval_semitones: Some(12),
+                chord_id: None,
+            }
+        );
+        assert_eq!(
+            parse_external_control_command(
+                r#"{"type":"play_reference","playback_mode":"chord","chord_id":"sus4","scene_id":"pedal"}"#
+            )
+            .unwrap(),
+            ExternalControlCommand::PlayReference {
+                note: None,
+                playback_mode: Some(ExternalReferencePlaybackMode::Chord),
+                scene_id: Some(ReferenceToneSceneId::Pedal),
+                interval_semitones: None,
+                chord_id: Some(ExternalReferenceChordId::Sus4),
+            }
+        );
+        assert_eq!(
+            parse_external_control_command(r#"{"type":"play_reference"}"#).unwrap(),
+            ExternalControlCommand::PlayReference {
+                note: None,
+                playback_mode: None,
+                scene_id: None,
+                interval_semitones: None,
+                chord_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_external_preset_and_metronome_commands() {
+        assert_eq!(
+            parse_external_control_command(
+                r#"{"type":"select_preset","preset_id":"guitar.standard"}"#
+            )
+            .unwrap(),
+            ExternalControlCommand::SelectPreset {
+                preset_id: "guitar.standard".to_owned(),
+            }
+        );
+        assert_eq!(
+            parse_external_control_command(
+                r#"{"type":"start_metronome","bpm":96,"beats_per_bar":6,"beat_unit":8,"subdivision":3}"#
+            )
+            .unwrap(),
+            ExternalControlCommand::StartMetronome {
+                bpm: Some(96),
+                beats_per_bar: Some(6),
+                beat_unit: Some(8),
+                subdivision: Some(3),
+            }
+        );
+        assert_eq!(
+            parse_external_control_command(r#"{"type":"stop_metronome"}"#).unwrap(),
+            ExternalControlCommand::StopMetronome
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_external_control_commands() {
+        assert!(matches!(
+            parse_external_control_command("{not json}"),
+            Err(ExternalControlParseError::MalformedJson(_))
+        ));
+        assert_eq!(
+            parse_external_control_command(r#"{"type":"select_reference"}"#).unwrap_err(),
+            ExternalControlParseError::InvalidCommand(
+                "select_reference requires at least one of: note, playback_mode, scene_id, interval_semitones, chord_id"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            parse_external_control_command(
+                r#"{"type":"select_reference","playback_mode":"single","interval_semitones":7}"#
+            )
+            .unwrap_err(),
+            ExternalControlParseError::InvalidCommand(
+                "single playback does not accept interval_semitones".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_external_control_command(r#"{"type":"select_reference","scene_id":"wide"}"#)
+                .unwrap_err(),
+            ExternalControlParseError::InvalidScene(
+                "field 'scene_id' must be one of: blend, pedal".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_external_control_command(r#"{"type":"select_reference","interval_semitones":6}"#)
+                .unwrap_err(),
+            ExternalControlParseError::InvalidInterval(
+                "field 'interval_semitones' must be one of: 3, 4, 5, 7, 12".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_external_control_command(r#"{"type":"start_metronome","bpm":301}"#).unwrap_err(),
+            ExternalControlParseError::InvalidMetronomeBpm(
+                "metronome BPM must be within 20..=300".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn serializes_external_control_commands_with_expected_shape() {
+        assert_eq!(
+            serde_json::to_string(&ExternalControlCommand::select_reference(
+                "A4".parse().unwrap()
+            ))
+            .unwrap(),
+            r#"{"type":"select_reference","note":"A4"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ExternalControlCommand::PlayReference {
+                note: Some("A4".parse().unwrap()),
+                playback_mode: Some(ExternalReferencePlaybackMode::Chord),
+                scene_id: Some(ReferenceToneSceneId::Pedal),
+                interval_semitones: None,
+                chord_id: Some(ExternalReferenceChordId::Major),
+            })
+            .unwrap(),
+            r#"{"type":"play_reference","note":"A4","playback_mode":"chord","scene_id":"pedal","chord_id":"major"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ExternalControlCommand::StartMetronome {
+                bpm: None,
+                beats_per_bar: None,
+                beat_unit: None,
+                subdivision: None,
+            })
+            .unwrap(),
+            r#"{"type":"start_metronome"}"#
         );
     }
 }
