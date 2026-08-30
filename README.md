@@ -91,8 +91,7 @@ called out explicitly.
     reference-tone targeting
 -   Built-in equal, pythagorean, and meantone temperament choices with
     A-anchored offset handling
--   Stable-width icon-only bar feedback with bounded activity markers and
-    concise hover summaries
+-   Stable-width single-glyph bar feedback with concise hover summaries
 -   Popup destinations for `Tune`, `Tone`, `Metronome`, `Presets`,
     and `Advanced`
 -   Shell IPC control for live preset, reference, and metronome actions
@@ -119,7 +118,8 @@ called out explicitly.
 ## v2.5 UI/UX Summary
 
 -   The bar button is now a fixed music glyph with bounded helper, tone,
-    and metronome activity markers.
+    sized to sit alongside the other Omarchy bar icons without extra
+    marker dots.
 -   Popup destinations now share a more consistent header, readout, and
     primary-action layout.
 -   `Tune` now always auditions one exact note; `Tone` owns interval,
@@ -127,8 +127,8 @@ called out explicitly.
 -   Tone vocabulary now uses `Single`, `Interval`, `Chord`, `Close`, and
     `Bass octave` for more musician-readable control labels.
 -   The tone preset surface now covers a curated interval set plus major,
-    minor, suspended, and seventh-chord families without turning into an
-    open-ended harmony editor.
+    minor, suspended, diminished, and seventh-chord families without
+    turning into an open-ended harmony editor.
 
 Not included:
 

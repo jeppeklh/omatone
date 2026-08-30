@@ -177,12 +177,12 @@ BarWidget {
     { id: "minor", label: "Minor", summary: "1 b3 5", intervalsSemitones: [3, 7] },
     { id: "sus2", label: "Sus2", summary: "1 2 5", intervalsSemitones: [2, 7] },
     { id: "sus4", label: "Sus4", summary: "1 4 5", intervalsSemitones: [5, 7] },
-    { id: "dominant7", label: "7", summary: "1 3 5 b7", intervalsSemitones: [4, 7, 10] },
-    { id: "major7", label: "Delta7", summary: "1 3 5 7", intervalsSemitones: [4, 7, 11] },
-    { id: "minor7", label: "m7", summary: "1 b3 5 b7", intervalsSemitones: [3, 7, 10] },
-    { id: "minor_major7", label: "mDelta7", summary: "1 b3 5 7", intervalsSemitones: [3, 7, 11] },
-    { id: "m7b5", label: "m7b5", summary: "1 b3 b5 b7", intervalsSemitones: [3, 6, 10] },
     { id: "diminished", label: "dim", summary: "1 b3 b5", intervalsSemitones: [3, 6] },
+    { id: "dominant7", label: "7", summary: "1 3 5 b7", intervalsSemitones: [4, 7, 10] },
+    { id: "major7", label: "\u25B37", summary: "1 3 5 7", intervalsSemitones: [4, 7, 11] },
+    { id: "minor7", label: "m7", summary: "1 b3 5 b7", intervalsSemitones: [3, 7, 10] },
+    { id: "minor_major7", label: "m\u25B37", summary: "1 b3 5 7", intervalsSemitones: [3, 7, 11] },
+    { id: "m7b5", label: "m7b5", summary: "1 b3 b5 b7", intervalsSemitones: [3, 6, 10] },
     { id: "diminished7", label: "dim7", summary: "1 b3 b5 bb7", intervalsSemitones: [3, 6, 9] },
   ]
   readonly property var defaultTemperamentOffsetsCents: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -347,11 +347,6 @@ BarWidget {
     return parts.join(" | ")
   }
   readonly property string barIconText: "\u266A"
-  readonly property bool barHelperIndicatorActive: helperRecoveryPending || helperState === "starting" || helperState === "active"
-  readonly property string barHelperIndicatorText: barHelperIndicatorActive ? "\u25CF" : "\u25CB"
-  readonly property string barToneIndicatorText: toneActive ? "\u25CF" : "\u25CB"
-  readonly property string barMetronomeIndicatorText: metronomeActive ? "\u25CF" : "\u25CB"
-  readonly property string barMeasureText: barIconText + " " + "\u25CF \u25CF \u25CF"
   readonly property string stateBadgeText: {
     if (helperRecoveryPending) return "Recovering"
     if (helperState === "error" || runtimeErrorMessage !== "") return "Error"
@@ -471,9 +466,6 @@ BarWidget {
   }
   readonly property string buttonText: {
     return barIconText
-      + " " + barHelperIndicatorText
-      + " " + barToneIndicatorText
-      + " " + barMetronomeIndicatorText
   }
   readonly property string tooltipText: {
     if (helperRecoveryPending) return "Omatune | Recovering audio"
@@ -3945,7 +3937,7 @@ BarWidget {
     visible: false
     enabled: false
     bar: root.bar
-    text: root.barMeasureText
+    text: root.barIconText
     horizontalMargin: button.horizontalMargin
   }
 

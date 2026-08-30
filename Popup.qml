@@ -1592,7 +1592,7 @@ FocusScope {
               spacing: Style.space(8)
 
               Text {
-                width: Math.max(0, parent.width - metronomeToggleButton.implicitWidth - parent.spacing)
+                width: Math.max(0, parent.width - metronomeToggleButton.width - parent.spacing)
                 textFormat: Text.PlainText
                 text: "Metronome"
                 color: root.foreground
