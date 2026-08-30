@@ -1,9 +1,10 @@
 # Omatune
 
-Omatune is an Omarchy bar plugin for real-time chromatic tuning.
+Omatune is an Omarchy bar plugin for tuning and practice.
 
-It listens to your microphone, shows the nearest note and cents offset,
-and can play reference tones and a metronome.
+It gives you a real-time chromatic tuner, reference notes, intervals,
+chords, drones, a metronome, and optional MIDI note control from the
+bar.
 
 ## Getting It Running
 
