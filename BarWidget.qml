@@ -155,17 +155,35 @@ BarWidget {
     { id: "warm", value: "warm", label: "Warm", summary: "Gentle overtones" },
   ]
   readonly property var referenceIntervalPresets: [
+    { semitones: 1, label: "m2" },
+    { semitones: 2, label: "M2" },
     { semitones: 3, label: "m3" },
     { semitones: 4, label: "M3" },
     { semitones: 5, label: "P4" },
+    { semitones: 6, label: "TT" },
     { semitones: 7, label: "P5" },
+    { semitones: 8, label: "m6" },
+    { semitones: 9, label: "M6" },
+    { semitones: 10, label: "m7" },
+    { semitones: 11, label: "M7" },
     { semitones: 12, label: "Oct" },
+    { semitones: 13, label: "m9" },
+    { semitones: 14, label: "M9" },
+    { semitones: 17, label: "P11" },
+    { semitones: 19, label: "P12" },
   ]
   readonly property var referenceChordPresets: [
-    { id: "major", label: "Major", intervalsSemitones: [4, 7] },
-    { id: "minor", label: "Minor", intervalsSemitones: [3, 7] },
-    { id: "sus2", label: "Sus2", intervalsSemitones: [2, 7] },
-    { id: "sus4", label: "Sus4", intervalsSemitones: [5, 7] },
+    { id: "major", label: "Major", summary: "1 3 5", intervalsSemitones: [4, 7] },
+    { id: "minor", label: "Minor", summary: "1 b3 5", intervalsSemitones: [3, 7] },
+    { id: "sus2", label: "Sus2", summary: "1 2 5", intervalsSemitones: [2, 7] },
+    { id: "sus4", label: "Sus4", summary: "1 4 5", intervalsSemitones: [5, 7] },
+    { id: "dominant7", label: "7", summary: "1 3 5 b7", intervalsSemitones: [4, 7, 10] },
+    { id: "major7", label: "Delta7", summary: "1 3 5 7", intervalsSemitones: [4, 7, 11] },
+    { id: "minor7", label: "m7", summary: "1 b3 5 b7", intervalsSemitones: [3, 7, 10] },
+    { id: "minor_major7", label: "mDelta7", summary: "1 b3 5 7", intervalsSemitones: [3, 7, 11] },
+    { id: "m7b5", label: "m7b5", summary: "1 b3 b5 b7", intervalsSemitones: [3, 6, 10] },
+    { id: "diminished", label: "dim", summary: "1 b3 b5", intervalsSemitones: [3, 6] },
+    { id: "diminished7", label: "dim7", summary: "1 b3 b5 bb7", intervalsSemitones: [3, 6, 9] },
   ]
   readonly property var defaultTemperamentOffsetsCents: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   readonly property var fallbackTemperament: ({
@@ -943,6 +961,24 @@ BarWidget {
 
     var preset = chordPresetById(text)
     return preset && String(preset.id || "") === text ? text : ""
+  }
+
+  function supportedReferenceIntervalSemitoneListText() {
+    var labels = []
+
+    for (var index = 0; index < referenceIntervalPresets.length; index++)
+      labels.push(String(referenceIntervalPresets[index].semitones))
+
+    return labels.join(", ")
+  }
+
+  function supportedReferenceChordIdListText() {
+    var labels = []
+
+    for (var index = 0; index < referenceChordPresets.length; index++)
+      labels.push(String(referenceChordPresets[index].id || ""))
+
+    return labels.join(", ")
   }
 
   function exactMetronomeMeter(beatsPerBar, beatUnit) {
@@ -2260,7 +2296,7 @@ BarWidget {
       if (exactIntervalSemitones === null) {
         return recordExternalControlFailure(
           sourceLabel,
-          commandType + " field 'interval_semitones' must be one of: 3, 4, 5, 7, 12"
+          commandType + " field 'interval_semitones' must be one of: " + supportedReferenceIntervalSemitoneListText()
         )
       }
       nextIntervalSemitones = exactIntervalSemitones
@@ -2273,7 +2309,7 @@ BarWidget {
 
       nextChordId = exactReferenceChordId(commandObject.chord_id)
       if (nextChordId === "")
-        return recordExternalControlFailure(sourceLabel, commandType + " field 'chord_id' must be one of: major, minor, sus2, sus4")
+        return recordExternalControlFailure(sourceLabel, commandType + " field 'chord_id' must be one of: " + supportedReferenceChordIdListText())
     }
 
     var displayedMidiNumber = noteField.present

@@ -26,6 +26,7 @@ FocusScope {
   readonly property int quickNoteColumns: verticalBar ? 2 : 3
   readonly property int presetColumns: verticalBar ? 1 : 2
   readonly property int toneOptionColumns: verticalBar ? 1 : 2
+  readonly property int intervalOptionColumns: verticalBar ? 2 : 4
   readonly property int referenceGridColumns: verticalBar ? 3 : 4
   readonly property var popupDestinations: [
     { value: "tune", label: "Tune" },
@@ -1247,10 +1248,13 @@ FocusScope {
               font.bold: true
             }
 
-            Flow {
+            Grid {
+              id: intervalPresetGrid
               width: parent.width
               visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "interval" : false
-              spacing: Style.space(6)
+              columns: root.intervalOptionColumns
+              rowSpacing: Style.space(6)
+              columnSpacing: Style.space(6)
 
               Repeater {
                 model: root.hostWidget ? root.hostWidget.referenceIntervalPresets : []
@@ -1258,6 +1262,7 @@ FocusScope {
                 Button {
                   required property var modelData
 
+                  width: (intervalPresetGrid.width - intervalPresetGrid.columnSpacing * Math.max(0, intervalPresetGrid.columns - 1)) / Math.max(1, intervalPresetGrid.columns)
                   text: String(modelData.label || "")
                   selected: root.hostWidget ? root.hostWidget.selectedReferenceIntervalSemitones === Number(modelData.semitones) : false
                   bordered: true
@@ -1282,26 +1287,53 @@ FocusScope {
               font.bold: true
             }
 
-            Flow {
+            Grid {
+              id: chordPresetGrid
               width: parent.width
               visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "chord" : false
-              spacing: Style.space(6)
+              columns: root.toneOptionColumns
+              rowSpacing: Style.space(8)
+              columnSpacing: Style.space(8)
 
               Repeater {
                 model: root.hostWidget ? root.hostWidget.referenceChordPresets : []
 
-                Button {
+                Item {
                   required property var modelData
 
-                  text: String(modelData.label || "")
-                  selected: root.hostWidget ? root.hostWidget.selectedReferenceChordId === String(modelData.id || "") : false
-                  bordered: true
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.bodySmall
-                  verticalPadding: Style.space(7)
-                  focusable: true
-                  onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceChordId(String(modelData.id || ""))
+                  width: (chordPresetGrid.width - chordPresetGrid.columnSpacing * Math.max(0, chordPresetGrid.columns - 1)) / Math.max(1, chordPresetGrid.columns)
+                  height: chordPresetOptionColumn.implicitHeight
+
+                  Column {
+                    id: chordPresetOptionColumn
+                    width: parent.width
+                    spacing: Style.space(4)
+
+                    Button {
+                      width: parent.width
+                      text: String(modelData.label || "")
+                      selected: root.hostWidget ? root.hostWidget.selectedReferenceChordId === String(modelData.id || "") : false
+                      bordered: true
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.bodySmall
+                      verticalPadding: Style.space(7)
+                      focusable: true
+                      onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceChordId(String(modelData.id || ""))
+                    }
+
+                    Text {
+                      width: parent.width
+                      visible: text !== ""
+                      textFormat: Text.PlainText
+                      text: String(modelData.summary || "")
+                      color: root.foreground
+                      opacity: root.highContrast ? 1.0 : 0.78
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      wrapMode: Text.WordWrap
+                    }
+                  }
                 }
               }
             }

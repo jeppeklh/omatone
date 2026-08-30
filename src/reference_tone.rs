@@ -756,6 +756,31 @@ mod tests {
     }
 
     #[test]
+    fn pedal_scene_supports_bounded_seventh_chord_voice_counts() {
+        let scene = ReferenceToneScene::with_scene_id(
+            "A4".parse().unwrap(),
+            vec![4, 7, 10],
+            ReferenceToneSceneId::Pedal,
+        )
+        .unwrap();
+
+        assert_eq!(
+            scene
+                .voice_plan()
+                .into_iter()
+                .map(|voice| voice.note)
+                .collect::<Vec<_>>(),
+            vec![
+                "A4".parse().unwrap(),
+                "A3".parse().unwrap(),
+                "C#5".parse().unwrap(),
+                "E5".parse().unwrap(),
+                "G5".parse().unwrap(),
+            ]
+        );
+    }
+
+    #[test]
     fn pedal_scene_skips_lower_root_when_note_is_already_at_bottom_of_range() {
         let scene = ReferenceToneScene::with_scene_id(
             "C0".parse().unwrap(),

@@ -57,8 +57,8 @@ Examples:
 ```json
 {"type":"select_reference","note":"A4"}
 {"type":"play_reference","note":"A4"}
-{"type":"play_reference","note":"D3","playback_mode":"interval","interval_semitones":7}
-{"type":"play_reference","playback_mode":"chord","chord_id":"minor","scene_id":"bass_octave","waveform_id":"sine"}
+{"type":"play_reference","note":"D3","playback_mode":"interval","interval_semitones":19}
+{"type":"play_reference","playback_mode":"chord","chord_id":"minor7","scene_id":"bass_octave","waveform_id":"sine"}
 {"type":"stop_reference"}
 ```
 
@@ -75,9 +75,11 @@ Rules:
 -   `scene_id`, when present, must be `close` or `bass_octave`;
 -   `waveform_id`, when present, must be `sine` or `warm`;
 -   `interval_semitones`, when present, must be one of the shipped interval
-    presets: `3`, `4`, `5`, `7`, or `12`;
+    presets: `1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`, `10`, `11`, `12`,
+    `13`, `14`, `17`, or `19`;
 -   `chord_id`, when present, must be one of the shipped chord presets:
-    `major`, `minor`, `sus2`, or `sus4`;
+    `major`, `minor`, `sus2`, `sus4`, `dominant7`, `major7`, `minor7`,
+    `minor_major7`, `m7b5`, `diminished`, or `diminished7`;
 -   `single` playback does not accept `interval_semitones` or
     `chord_id`;
 -   `interval` playback does not accept `chord_id`;

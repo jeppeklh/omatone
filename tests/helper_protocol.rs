@@ -453,6 +453,52 @@ fn chord_playback_reports_root_and_all_generated_voices() {
 }
 
 #[test]
+fn dense_seventh_chord_playback_reports_all_bounded_voices() {
+    let a4 = "A4".parse::<Note>().unwrap();
+    let c_sharp5 = "C#5".parse::<Note>().unwrap();
+    let e5 = "E5".parse::<Note>().unwrap();
+    let g5 = "G5".parse::<Note>().unwrap();
+    let expected_tone = UiMessage::ToneStarted {
+        note: a4,
+        frequency_hz: a4.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+        scene_id: ReferenceToneSceneId::Blend,
+        waveform_id: ReferenceToneWaveformId::Warm,
+        intervals_semitones: vec![4, 7, 10],
+        voices: vec![
+            omatune::protocol::ToneVoice {
+                note: a4,
+                frequency_hz: a4.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+            },
+            omatune::protocol::ToneVoice {
+                note: c_sharp5,
+                frequency_hz: c_sharp5.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+            },
+            omatune::protocol::ToneVoice {
+                note: e5,
+                frequency_hz: e5.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+            },
+            omatune::protocol::ToneVoice {
+                note: g5,
+                frequency_hz: g5.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
+            },
+        ],
+    }
+    .to_json_line()
+    .unwrap();
+
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"intervals_semitones\":[4,7,10]}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(lines, vec![r#"{"type":"ready"}"#.to_owned(), expected_tone]);
+}
+
+#[test]
 fn sine_waveform_playback_is_reported_explicitly() {
     let output = run_helper_with_input(
         "{\"type\":\"play_tone\",\"note\":\"A4\",\"waveform_id\":\"sine\"}\n",

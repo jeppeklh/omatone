@@ -397,9 +397,12 @@ Examples:
     {"type":"play_tone","note":"C4"}
     {"type":"play_tone","note":"F#4"}
     {"type":"play_tone","note":"Bb3"}
+    {"type":"play_tone","note":"A4","intervals_semitones":[3]}
     {"type":"play_tone","note":"A4","intervals_semitones":[7]}
     {"type":"play_tone","note":"A4","intervals_semitones":[12]}
     {"type":"play_tone","note":"A4","intervals_semitones":[4,7]}
+    {"type":"play_tone","note":"A4","intervals_semitones":[4,7,10]}
+    {"type":"play_tone","note":"A4","intervals_semitones":[3,6,10]}
     {"type":"play_tone","note":"A4","waveform_id":"sine"}
 
 The implementation should normalize or explicitly document accepted
@@ -431,8 +434,13 @@ workflows:
 -   `interval`: the selected note remains the sustained root and one
     configured interval note is added above it;
 -   `chord`: the selected note remains the root and one fixed preset
-    shape such as major, minor, `sus2`, or `sus4` provides the upper
-    voices.
+    shape such as major, minor, `sus2`, `sus4`, dominant seventh, major
+    seventh, minor seventh, minor-major seventh, half-diminished,
+    diminished, or diminished seventh provides the upper voices.
+
+The current Phase 4 popup ships these interval presets for the `interval`
+path: `1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`, `10`, `11`, `12`,
+`13`, `14`, `17`, and `19` semitones above the root.
 
 Phase 2 keeps the same target-note model and adds one bounded richer
 scene selector:

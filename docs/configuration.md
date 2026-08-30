@@ -209,9 +209,38 @@ presets:
 -   `warm`
 
 `referenceIntervalSemitones` must resolve to one of the built-in interval
-presets.
+preset semitone values:
 
-`referenceChordId` must resolve to one of the built-in chord presets.
+-   `1`
+-   `2`
+-   `3`
+-   `4`
+-   `5`
+-   `6`
+-   `7`
+-   `8`
+-   `9`
+-   `10`
+-   `11`
+-   `12`
+-   `13`
+-   `14`
+-   `17`
+-   `19`
+
+`referenceChordId` must resolve to one of the built-in chord presets:
+
+-   `major`
+-   `minor`
+-   `sus2`
+-   `sus4`
+-   `dominant7`
+-   `major7`
+-   `minor7`
+-   `minor_major7`
+-   `m7b5`
+-   `diminished`
+-   `diminished7`
 
 `metronomeBpm` must be an integer within `20..=300`.
 

@@ -50,6 +50,20 @@ pub enum ExternalReferenceChordId {
     Minor,
     Sus2,
     Sus4,
+    #[serde(rename = "dominant7")]
+    Dominant7,
+    #[serde(rename = "major7")]
+    Major7,
+    #[serde(rename = "minor7")]
+    Minor7,
+    #[serde(rename = "minor_major7")]
+    MinorMajor7,
+    #[serde(rename = "m7b5")]
+    HalfDiminished,
+    #[serde(rename = "diminished")]
+    Diminished,
+    #[serde(rename = "diminished7")]
+    Diminished7,
 }
 
 impl ExternalReferenceChordId {
@@ -59,12 +73,31 @@ impl ExternalReferenceChordId {
             "minor" => Some(Self::Minor),
             "sus2" => Some(Self::Sus2),
             "sus4" => Some(Self::Sus4),
+            "dominant7" => Some(Self::Dominant7),
+            "major7" => Some(Self::Major7),
+            "minor7" => Some(Self::Minor7),
+            "minor_major7" => Some(Self::MinorMajor7),
+            "m7b5" => Some(Self::HalfDiminished),
+            "diminished" => Some(Self::Diminished),
+            "diminished7" => Some(Self::Diminished7),
             _ => None,
         }
     }
 
     pub fn supported_ids() -> &'static [&'static str] {
-        &["major", "minor", "sus2", "sus4"]
+        &[
+            "major",
+            "minor",
+            "sus2",
+            "sus4",
+            "dominant7",
+            "major7",
+            "minor7",
+            "minor_major7",
+            "m7b5",
+            "diminished",
+            "diminished7",
+        ]
     }
 }
 
@@ -954,7 +987,7 @@ fn map_external_metronome_state_error(error: MetronomeStateError) -> ExternalCon
 }
 
 fn supported_external_interval_semitones() -> &'static [i32] {
-    &[3, 4, 5, 7, 12]
+    &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 19]
 }
 
 #[cfg(test)]
@@ -1443,7 +1476,21 @@ mod tests {
         );
         assert_eq!(
             parse_external_control_command(
-                r#"{"type":"play_reference","playback_mode":"chord","chord_id":"sus4","scene_id":"bass_octave","waveform_id":"sine"}"#
+                r#"{"type":"select_reference","interval_semitones":19}"#
+            )
+            .unwrap(),
+            ExternalControlCommand::SelectReference {
+                note: None,
+                playback_mode: Some(ExternalReferencePlaybackMode::Interval),
+                scene_id: None,
+                interval_semitones: Some(19),
+                chord_id: None,
+                waveform_id: None,
+            }
+        );
+        assert_eq!(
+            parse_external_control_command(
+                r#"{"type":"play_reference","playback_mode":"chord","chord_id":"m7b5","scene_id":"bass_octave","waveform_id":"sine"}"#
             )
             .unwrap(),
             ExternalControlCommand::PlayReference {
@@ -1451,7 +1498,7 @@ mod tests {
                 playback_mode: Some(ExternalReferencePlaybackMode::Chord),
                 scene_id: Some(ReferenceToneSceneId::Pedal),
                 interval_semitones: None,
-                chord_id: Some(ExternalReferenceChordId::Sus4),
+                chord_id: Some(ExternalReferenceChordId::HalfDiminished),
                 waveform_id: Some(ReferenceToneWaveformId::Sine),
             }
         );
@@ -1541,10 +1588,10 @@ mod tests {
             )
         );
         assert_eq!(
-            parse_external_control_command(r#"{"type":"select_reference","interval_semitones":6}"#)
+            parse_external_control_command(r#"{"type":"select_reference","interval_semitones":15}"#)
                 .unwrap_err(),
             ExternalControlParseError::InvalidInterval(
-                "field 'interval_semitones' must be one of: 3, 4, 5, 7, 12".to_owned()
+                "field 'interval_semitones' must be one of: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 19".to_owned()
             )
         );
         assert_eq!(
@@ -1552,6 +1599,13 @@ mod tests {
                 .unwrap_err(),
             ExternalControlParseError::InvalidCommand(
                 "field 'waveform_id' must be one of: sine, warm".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_external_control_command(r#"{"type":"select_reference","chord_id":"augmented"}"#)
+                .unwrap_err(),
+            ExternalControlParseError::InvalidChord(
+                "field 'chord_id' must be one of: major, minor, sus2, sus4, dominant7, major7, minor7, minor_major7, m7b5, diminished, diminished7".to_owned()
             )
         );
         assert_eq!(
@@ -1577,11 +1631,11 @@ mod tests {
                 playback_mode: Some(ExternalReferencePlaybackMode::Chord),
                 scene_id: Some(ReferenceToneSceneId::Pedal),
                 interval_semitones: None,
-                chord_id: Some(ExternalReferenceChordId::Major),
+                chord_id: Some(ExternalReferenceChordId::MinorMajor7),
                 waveform_id: Some(ReferenceToneWaveformId::Sine),
             })
             .unwrap(),
-            r#"{"type":"play_reference","note":"A4","playback_mode":"chord","scene_id":"bass_octave","chord_id":"major","waveform_id":"sine"}"#
+            r#"{"type":"play_reference","note":"A4","playback_mode":"chord","scene_id":"bass_octave","chord_id":"minor_major7","waveform_id":"sine"}"#
         );
         assert_eq!(
             serde_json::to_string(&ExternalControlCommand::StartMetronome {
