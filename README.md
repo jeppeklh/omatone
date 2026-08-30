@@ -11,7 +11,7 @@ Requires Omarchy, microphone access, working audio output, and Rust with
 Cargo.
 
 ```sh
-omarchy plugin add https://github.com/jeppeklh/omatone.git --enable
+omarchy plugin add https://github.com/jeppeklh/omatune.git --enable
 ```
 
 Open the music-note widget in the bar to start it. The first launch
