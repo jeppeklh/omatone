@@ -9,20 +9,32 @@ pub const DEFAULT_SAMPLE_RATE_HZ: u32 = 48_000;
 pub const MAX_REFERENCE_INTERVALS: usize = 3;
 pub const MAX_REFERENCE_INTERVAL_SEMITONES: i32 = 24;
 pub const DEFAULT_REFERENCE_SCENE_ID: ReferenceToneSceneId = ReferenceToneSceneId::Blend;
+pub const DEFAULT_REFERENCE_WAVEFORM_ID: ReferenceToneWaveformId = ReferenceToneWaveformId::Warm;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReferenceToneScene {
     root_note: Note,
     intervals_semitones: Vec<i32>,
     scene_id: ReferenceToneSceneId,
+    waveform_id: ReferenceToneWaveformId,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceToneSceneId {
+    #[serde(rename = "close")]
     #[default]
     Blend,
+    #[serde(rename = "bass_octave")]
     Pedal,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceToneWaveformId {
+    Sine,
+    #[default]
+    Warm,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,13 +98,32 @@ impl ReferenceToneScene {
         root_note: Note,
         intervals_semitones: Vec<i32>,
     ) -> Result<Self, ReferenceToneSceneError> {
-        Self::with_scene_id(root_note, intervals_semitones, DEFAULT_REFERENCE_SCENE_ID)
+        Self::with_scene_id_and_waveform(
+            root_note,
+            intervals_semitones,
+            DEFAULT_REFERENCE_SCENE_ID,
+            DEFAULT_REFERENCE_WAVEFORM_ID,
+        )
     }
 
     pub fn with_scene_id(
         root_note: Note,
+        intervals_semitones: Vec<i32>,
+        scene_id: ReferenceToneSceneId,
+    ) -> Result<Self, ReferenceToneSceneError> {
+        Self::with_scene_id_and_waveform(
+            root_note,
+            intervals_semitones,
+            scene_id,
+            DEFAULT_REFERENCE_WAVEFORM_ID,
+        )
+    }
+
+    pub fn with_scene_id_and_waveform(
+        root_note: Note,
         mut intervals_semitones: Vec<i32>,
         scene_id: ReferenceToneSceneId,
+        waveform_id: ReferenceToneWaveformId,
     ) -> Result<Self, ReferenceToneSceneError> {
         if intervals_semitones.len() > MAX_REFERENCE_INTERVALS {
             return Err(ReferenceToneSceneError::TooManyIntervals(
@@ -123,6 +154,7 @@ impl ReferenceToneScene {
             root_note,
             intervals_semitones,
             scene_id,
+            waveform_id,
         })
     }
 
@@ -136,6 +168,10 @@ impl ReferenceToneScene {
 
     pub fn scene_id(&self) -> ReferenceToneSceneId {
         self.scene_id
+    }
+
+    pub fn waveform_id(&self) -> ReferenceToneWaveformId {
+        self.waveform_id
     }
 
     #[cfg(test)]
@@ -158,9 +194,11 @@ impl ReferenceToneScene {
                 ReferenceToneSceneId::Blend => vec![ReferenceToneVoicePlan {
                     note: self.root_note,
                     mix_level: 1.0,
-                    waveform: ReferenceToneWaveform::Sine,
+                    waveform: anchor_voice_waveform(self.waveform_id),
                 }],
-                ReferenceToneSceneId::Pedal => build_pedal_single_voice_plan(self.root_note),
+                ReferenceToneSceneId::Pedal => {
+                    build_pedal_single_voice_plan(self.root_note, self.waveform_id)
+                }
             };
         }
 
@@ -174,16 +212,16 @@ impl ReferenceToneScene {
 impl ReferenceToneSceneId {
     pub fn parse(input: &str) -> Option<Self> {
         match input.trim() {
-            "blend" => Some(Self::Blend),
-            "pedal" => Some(Self::Pedal),
+            "blend" | "close" => Some(Self::Blend),
+            "pedal" | "bass_octave" => Some(Self::Pedal),
             _ => None,
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Blend => "blend",
-            Self::Pedal => "pedal",
+            Self::Blend => "close",
+            Self::Pedal => "bass_octave",
         }
     }
 
@@ -192,7 +230,25 @@ impl ReferenceToneSceneId {
     }
 
     pub fn supported_ids() -> &'static [&'static str] {
-        &["blend", "pedal"]
+        &["close", "bass_octave"]
+    }
+}
+
+impl ReferenceToneWaveformId {
+    pub fn parse(input: &str) -> Option<Self> {
+        match input.trim() {
+            "sine" => Some(Self::Sine),
+            "warm" => Some(Self::Warm),
+            _ => None,
+        }
+    }
+
+    pub fn is_default(&self) -> bool {
+        *self == DEFAULT_REFERENCE_WAVEFORM_ID
+    }
+
+    pub fn supported_ids() -> &'static [&'static str] {
+        &["sine", "warm"]
     }
 }
 
@@ -501,7 +557,7 @@ fn build_blend_voice_plan(scene: &ReferenceToneScene) -> Vec<ReferenceToneVoiceP
     voices.push(ReferenceToneVoicePlan {
         note: scene.root_note,
         mix_level: 0.82,
-        waveform: ReferenceToneWaveform::Warm,
+        waveform: anchor_voice_waveform(scene.waveform_id()),
     });
 
     for interval_semitones in scene.intervals_semitones() {
@@ -509,7 +565,7 @@ fn build_blend_voice_plan(scene: &ReferenceToneScene) -> Vec<ReferenceToneVoiceP
             note: resolve_interval_note(scene.root_note, *interval_semitones)
                 .expect("validated reference tone scene produced an unsupported note"),
             mix_level: upper_voice_mix_level(*interval_semitones),
-            waveform: ReferenceToneWaveform::Sine,
+            waveform: upper_interval_waveform(scene.waveform_id()),
         });
     }
 
@@ -521,14 +577,14 @@ fn build_pedal_voice_plan(scene: &ReferenceToneScene) -> Vec<ReferenceToneVoiceP
     voices.push(ReferenceToneVoicePlan {
         note: scene.root_note,
         mix_level: 0.68,
-        waveform: ReferenceToneWaveform::Warm,
+        waveform: anchor_voice_waveform(scene.waveform_id()),
     });
 
     if let Some(lower_root) = resolve_lower_pedal_root(scene.root_note) {
         voices.push(ReferenceToneVoicePlan {
             note: lower_root,
             mix_level: 0.5,
-            waveform: ReferenceToneWaveform::Warm,
+            waveform: anchor_voice_waveform(scene.waveform_id()),
         });
     }
 
@@ -537,29 +593,48 @@ fn build_pedal_voice_plan(scene: &ReferenceToneScene) -> Vec<ReferenceToneVoiceP
             note: resolve_interval_note(scene.root_note, *interval_semitones)
                 .expect("validated reference tone scene produced an unsupported note"),
             mix_level: (upper_voice_mix_level(*interval_semitones) + 0.08).min(1.0),
-            waveform: ReferenceToneWaveform::Sine,
+            waveform: upper_interval_waveform(scene.waveform_id()),
         });
     }
 
     voices
 }
 
-fn build_pedal_single_voice_plan(root_note: Note) -> Vec<ReferenceToneVoicePlan> {
+fn build_pedal_single_voice_plan(
+    root_note: Note,
+    waveform_id: ReferenceToneWaveformId,
+) -> Vec<ReferenceToneVoicePlan> {
     let mut voices = vec![ReferenceToneVoicePlan {
         note: root_note,
         mix_level: 0.74,
-        waveform: ReferenceToneWaveform::Warm,
+        waveform: anchor_voice_waveform(waveform_id),
     }];
 
     if let Some(lower_root) = resolve_lower_pedal_root(root_note) {
         voices.push(ReferenceToneVoicePlan {
             note: lower_root,
             mix_level: 0.56,
-            waveform: ReferenceToneWaveform::Warm,
+            waveform: anchor_voice_waveform(waveform_id),
         });
     }
 
     voices
+}
+
+fn anchor_voice_waveform(waveform_id: ReferenceToneWaveformId) -> ReferenceToneWaveform {
+    match waveform_id {
+        ReferenceToneWaveformId::Sine => ReferenceToneWaveform::Sine,
+        ReferenceToneWaveformId::Warm => ReferenceToneWaveform::Warm,
+    }
+}
+
+fn upper_interval_waveform(waveform_id: ReferenceToneWaveformId) -> ReferenceToneWaveform {
+    // Keep upper interval voices pure so the selected voicing stays easy to hear.
+    match waveform_id {
+        ReferenceToneWaveformId::Sine | ReferenceToneWaveformId::Warm => {
+            ReferenceToneWaveform::Sine
+        }
+    }
 }
 
 fn resolve_lower_pedal_root(root_note: Note) -> Option<Note> {
@@ -579,8 +654,8 @@ fn upper_voice_mix_level(interval_semitones: i32) -> f32 {
 mod tests {
     use super::{
         ReferenceToneGenerator, ReferenceToneScene, ReferenceToneSceneError, ReferenceToneSceneId,
-        ReferenceToneVoice, ReferenceToneWaveform, ToneGeneratorError, DEFAULT_REFERENCE_SCENE_ID,
-        DEFAULT_SAMPLE_RATE_HZ,
+        ReferenceToneVoice, ReferenceToneWaveform, ReferenceToneWaveformId, ToneGeneratorError,
+        DEFAULT_REFERENCE_SCENE_ID, DEFAULT_REFERENCE_WAVEFORM_ID, DEFAULT_SAMPLE_RATE_HZ,
     };
     use crate::note::{Note, DEFAULT_REFERENCE_A_HZ};
     use std::f64::consts::TAU;
@@ -645,6 +720,7 @@ mod tests {
         assert_eq!(scene.root_note(), a4);
         assert_eq!(scene.intervals_semitones(), &[7, 12]);
         assert_eq!(scene.scene_id(), DEFAULT_REFERENCE_SCENE_ID);
+        assert_eq!(scene.waveform_id(), DEFAULT_REFERENCE_WAVEFORM_ID);
         assert_eq!(
             scene.notes(),
             vec![
@@ -695,6 +771,56 @@ mod tests {
                 .map(|voice| voice.note)
                 .collect::<Vec<_>>(),
             vec!["C0".parse().unwrap()]
+        );
+    }
+
+    #[test]
+    fn sine_waveform_uses_pure_sine_for_every_voice() {
+        let scene = ReferenceToneScene::with_scene_id_and_waveform(
+            "A4".parse().unwrap(),
+            vec![4, 7],
+            ReferenceToneSceneId::Pedal,
+            ReferenceToneWaveformId::Sine,
+        )
+        .unwrap();
+
+        assert_eq!(
+            scene
+                .voice_plan()
+                .into_iter()
+                .map(|voice| voice.waveform)
+                .collect::<Vec<_>>(),
+            vec![
+                ReferenceToneWaveform::Sine,
+                ReferenceToneWaveform::Sine,
+                ReferenceToneWaveform::Sine,
+                ReferenceToneWaveform::Sine,
+            ]
+        );
+    }
+
+    #[test]
+    fn warm_waveform_keeps_anchor_voices_warm_and_upper_intervals_clear() {
+        let scene = ReferenceToneScene::with_scene_id_and_waveform(
+            "A4".parse().unwrap(),
+            vec![4, 7],
+            ReferenceToneSceneId::Pedal,
+            ReferenceToneWaveformId::Warm,
+        )
+        .unwrap();
+
+        assert_eq!(
+            scene
+                .voice_plan()
+                .into_iter()
+                .map(|voice| voice.waveform)
+                .collect::<Vec<_>>(),
+            vec![
+                ReferenceToneWaveform::Warm,
+                ReferenceToneWaveform::Warm,
+                ReferenceToneWaveform::Sine,
+                ReferenceToneWaveform::Sine,
+            ]
         );
     }
 

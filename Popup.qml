@@ -25,6 +25,7 @@ FocusScope {
   readonly property real popupMaxHeight: Style.space(620)
   readonly property int quickNoteColumns: verticalBar ? 2 : 3
   readonly property int presetColumns: verticalBar ? 1 : 2
+  readonly property int toneOptionColumns: verticalBar ? 1 : 2
   readonly property int referenceGridColumns: verticalBar ? 3 : 4
   readonly property var popupDestinations: [
     { value: "tune", label: "Tune" },
@@ -1209,11 +1210,21 @@ FocusScope {
               foreground: root.foreground
             }
 
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Mode"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
             ButtonGroup {
               width: parent.width
               options: [
                 { value: "single", label: "Single" },
-                { value: "drone", label: "Drone" },
+                { value: "interval", label: "Interval" },
                 { value: "chord", label: "Chord" },
               ]
               value: root.hostWidget ? root.hostWidget.referencePlaybackMode : "single"
@@ -1225,21 +1236,20 @@ FocusScope {
               }
             }
 
-            ButtonGroup {
+            Text {
               width: parent.width
-              options: root.hostWidget ? root.hostWidget.referenceScenePresets : []
-              value: root.hostWidget ? root.hostWidget.selectedReferenceSceneId : "blend"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              onChanged: function(value) {
-                if (root.hostWidget) root.hostWidget.setSelectedReferenceSceneId(value)
-              }
+              visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "interval" : false
+              textFormat: Text.PlainText
+              text: "Interval"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
             }
 
             Flow {
               width: parent.width
-              visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "drone" : false
+              visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "interval" : false
               spacing: Style.space(6)
 
               Repeater {
@@ -1259,6 +1269,17 @@ FocusScope {
                   onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceIntervalSemitones(Number(modelData.semitones))
                 }
               }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.hostWidget ? root.hostWidget.referencePlaybackMode === "chord" : false
+              textFormat: Text.PlainText
+              text: "Chord"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
             }
 
             Flow {
@@ -1283,6 +1304,139 @@ FocusScope {
                   onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceChordId(String(modelData.id || ""))
                 }
               }
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Voicing"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Grid {
+              id: scenePresetGrid
+              width: parent.width
+              columns: root.toneOptionColumns
+              rowSpacing: Style.space(8)
+              columnSpacing: Style.space(8)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.referenceScenePresets : []
+
+                Item {
+                  required property var modelData
+                  readonly property string sceneId: String(modelData.id || "")
+                  readonly property bool available: root.hostWidget ? root.hostWidget.referenceScenePresetEnabled(sceneId) : false
+
+                  width: (scenePresetGrid.width - scenePresetGrid.columnSpacing * Math.max(0, scenePresetGrid.columns - 1)) / Math.max(1, scenePresetGrid.columns)
+                  height: scenePresetOptionColumn.implicitHeight
+
+                  Column {
+                    id: scenePresetOptionColumn
+                    width: parent.width
+                    spacing: Style.space(4)
+
+                    Button {
+                      width: parent.width
+                      text: String(modelData.label || "")
+                      selected: root.hostWidget ? root.hostWidget.selectedReferenceSceneId === sceneId : false
+                      bordered: true
+                      enabled: parent.parent.available
+                      opacity: enabled ? 1.0 : 0.5
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.bodySmall
+                      verticalPadding: Style.space(7)
+                      focusable: enabled
+                      onClicked: if (root.hostWidget && enabled) root.hostWidget.setSelectedReferenceSceneId(sceneId)
+                    }
+
+                    Text {
+                      width: parent.width
+                      textFormat: Text.PlainText
+                      text: root.hostWidget ? root.hostWidget.referenceScenePreviewSummary(sceneId) : ""
+                      color: root.foreground
+                      opacity: parent.parent.available ? (root.highContrast ? 1.0 : 0.78) : 0.58
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      wrapMode: Text.WordWrap
+                    }
+                  }
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Waveform"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Grid {
+              id: waveformPresetGrid
+              width: parent.width
+              columns: root.toneOptionColumns
+              rowSpacing: Style.space(8)
+              columnSpacing: Style.space(8)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.referenceWaveformPresets : []
+
+                Item {
+                  required property var modelData
+                  readonly property string waveformId: String(modelData.id || "")
+
+                  width: (waveformPresetGrid.width - waveformPresetGrid.columnSpacing * Math.max(0, waveformPresetGrid.columns - 1)) / Math.max(1, waveformPresetGrid.columns)
+                  height: waveformPresetOptionColumn.implicitHeight
+
+                  Column {
+                    id: waveformPresetOptionColumn
+                    width: parent.width
+                    spacing: Style.space(4)
+
+                    Button {
+                      width: parent.width
+                      text: String(modelData.label || "")
+                      selected: root.hostWidget ? root.hostWidget.selectedReferenceWaveformId === waveformId : false
+                      bordered: true
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.bodySmall
+                      verticalPadding: Style.space(7)
+                      focusable: true
+                      onClicked: if (root.hostWidget) root.hostWidget.setSelectedReferenceWaveformId(waveformId)
+                    }
+
+                    Text {
+                      width: parent.width
+                      textFormat: Text.PlainText
+                      text: String(modelData.summary || "")
+                      color: root.foreground
+                      opacity: root.highContrast ? 1.0 : 0.78
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      wrapMode: Text.WordWrap
+                    }
+                  }
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Root note"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
             }
 
             Grid {
@@ -2022,10 +2176,52 @@ FocusScope {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Voice preview"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Flow {
+              id: voicePreviewFlow
+              width: parent.width
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.hostWidget ? root.hostWidget.selectedReferencePreviewVoiceLabels : []
+
+                Rectangle {
+                  required property var modelData
+
+                  width: previewVoiceLabel.implicitWidth + Style.space(16)
+                  height: previewVoiceLabel.implicitHeight + Style.space(10)
+                  radius: height / 2
+                  color: Util.alpha(Color.accent, root.highContrast ? 0.24 : 0.16)
+                  border.width: root.highContrast ? 1 : 0
+                  border.color: Util.alpha(Color.accent, root.highContrast ? 0.90 : 0.0)
+
+                  Text {
+                    id: previewVoiceLabel
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: String(modelData)
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                }
+              }
             }
           }
         }
-      }
-    }
   }
 }

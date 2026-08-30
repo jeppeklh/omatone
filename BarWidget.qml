@@ -54,8 +54,10 @@ BarWidget {
   property string referencePlaybackMode: "single"
   property int selectedReferenceIntervalSemitones: 7
   property string selectedReferenceChordId: "major"
-  property string selectedReferenceSceneId: "blend"
-  property string activeToneSceneId: "blend"
+  property string selectedReferenceSceneId: "close"
+  property string selectedReferenceWaveformId: "warm"
+  property string activeToneSceneId: "close"
+  property string activeToneWaveformId: "warm"
   property bool highContrastMode: false
   property bool reducedMotionMode: false
   property bool analysisViewsEnabled: false
@@ -109,7 +111,7 @@ BarWidget {
   readonly property int maximumPitchAnalysisHistoryPoints: 12
   readonly property int maximumFavoriteQuickSwitches: 6
   readonly property int maximumRecentQuickSwitches: 6
-  readonly property int settingsConfigVersion: 5
+  readonly property int settingsConfigVersion: 6
   readonly property int helperRecoveryMaxAttempts: 5
   readonly property int defaultMetronomeBpm: 100
   readonly property int defaultMetronomeBeatsPerBar: 4
@@ -118,7 +120,8 @@ BarWidget {
   readonly property int metronomeTapResetMs: 2000
   readonly property int defaultReferenceIntervalSemitones: 7
   readonly property string defaultReferenceChordId: "major"
-  readonly property string defaultReferenceSceneId: "blend"
+  readonly property string defaultReferenceSceneId: "close"
+  readonly property string defaultReferenceWaveformId: "warm"
   readonly property string defaultPresetId: "guitar.standard"
   readonly property string defaultTemperamentId: "equal.12tet"
   readonly property var metronomeMeterPresets: [
@@ -142,10 +145,14 @@ BarWidget {
     { semitones: 7, label: "F" },
     { semitones: 9, label: "Eb" },
   ]
-  readonly property var referencePlaybackModes: ["single", "drone", "chord"]
+  readonly property var referencePlaybackModes: ["single", "interval", "chord"]
   readonly property var referenceScenePresets: [
-    { id: "blend", value: "blend", label: "Blend" },
-    { id: "pedal", value: "pedal", label: "Pedal" },
+    { id: "close", value: "close", label: "Close" },
+    { id: "bass_octave", value: "bass_octave", label: "Bass octave" },
+  ]
+  readonly property var referenceWaveformPresets: [
+    { id: "sine", value: "sine", label: "Sine", summary: "Pure tone" },
+    { id: "warm", value: "warm", label: "Warm", summary: "Gentle overtones" },
   ]
   readonly property var referenceIntervalPresets: [
     { semitones: 3, label: "m3" },
@@ -223,6 +230,7 @@ BarWidget {
   readonly property string selectedReferenceNoteLabel: formatMidiNote(selectedReferenceMidiNumber, noteSpelling)
   readonly property int selectedReferenceIntervalPresetIndex: indexOfReferenceIntervalPreset(selectedReferenceIntervalSemitones)
   readonly property int selectedReferenceChordPresetIndex: indexOfReferenceChordPreset(selectedReferenceChordId)
+  readonly property int selectedReferenceWaveformPresetIndex: indexOfReferenceWaveformPreset(selectedReferenceWaveformId)
   readonly property var selectedReferenceIntervalsSemitones: referenceSelectionIntervals(
     referencePlaybackMode,
     selectedReferenceIntervalSemitones,
@@ -230,12 +238,27 @@ BarWidget {
   )
   readonly property string detectedNoteLabel: displayNoteLabel(detectedNote)
   readonly property string activeToneNoteLabel: displayNoteLabel(activeToneNote)
+  readonly property string selectedReferenceVoicingLabel: referenceScenePresetLabel(selectedReferenceSceneId)
   readonly property string selectedReferenceSceneLabel: formatReferenceSceneLabel(selectedReferenceNoteLabel, selectedReferenceIntervalsSemitones)
   readonly property string selectedReferencePlaybackLabel: formatReferencePlaybackLabel(selectedReferenceSceneLabel, selectedReferenceSceneId)
+  readonly property string selectedReferenceWaveformLabel: referenceWaveformPresetLabel(selectedReferenceWaveformId)
+  readonly property string selectedReferenceToneSummaryLabel: formatReferenceToneSummaryLabel(
+    selectedReferenceSceneLabel,
+    selectedReferenceSceneId,
+    selectedReferenceWaveformId
+  )
+  readonly property var selectedReferencePreviewVoiceLabels: previewReferenceVoiceLabels(
+    selectedReferenceMidiNumber,
+    transpositionSemitones,
+    selectedReferenceIntervalsSemitones,
+    selectedReferenceSceneId
+  )
   readonly property bool activeToneIsSingleNote: toneActive
     && activeToneIntervalsSemitones.length === 0
     && normalizeSelectedReferenceSceneId(activeToneSceneId) === defaultReferenceSceneId
   readonly property bool activeToneHasIntervals: activeToneIntervalsSemitones.length > 0
+  readonly property string activeToneVoicingLabel: referenceScenePresetLabel(activeToneSceneId)
+  readonly property string activeToneWaveformLabel: referenceWaveformPresetLabel(activeToneWaveformId)
   readonly property string activeToneSceneKind: {
     if (!toneActive) return ""
     if (activeToneIntervalsSemitones.length > 1) return "chord"
@@ -243,12 +266,17 @@ BarWidget {
     return "tone"
   }
   readonly property string activeTonePlaybackTypeText: {
-    if (activeToneSceneKind === "chord") return "Reference chord"
-    if (activeToneSceneKind === "interval") return "Drone interval"
-    return "Reference tone"
+    if (activeToneSceneKind === "chord") return "Chord"
+    if (activeToneSceneKind === "interval") return "Interval"
+    return "Single"
   }
   readonly property string activeToneSceneLabel: formatReferenceSceneLabel(activeToneNoteLabel, activeToneIntervalsSemitones)
   readonly property string activeTonePlaybackLabel: formatReferencePlaybackLabel(activeToneSceneLabel, activeToneSceneId)
+  readonly property string activeToneSummaryLabel: formatReferenceToneSummaryLabel(
+    activeToneSceneLabel,
+    activeToneSceneId,
+    activeToneWaveformId
+  )
   readonly property string activeToneVoiceSummaryText: formatToneVoiceSummary(activeToneVoices)
   readonly property int selectedMetronomeMeterPresetIndex: indexOfMetronomeMeterPreset(metronomeBeatsPerBar, metronomeBeatUnit)
   readonly property string metronomeMeterLabel: metronomeMeterPresets[selectedMetronomeMeterPresetIndex].label
@@ -273,6 +301,7 @@ BarWidget {
     && sameNoteText(activeToneNote, selectedReferenceCommandNoteLabel)
     && sameIntegerArray(activeToneIntervalsSemitones, selectedReferenceIntervalsSemitones)
     && normalizeSelectedReferenceSceneId(activeToneSceneId) === normalizeSelectedReferenceSceneId(selectedReferenceSceneId)
+    && normalizeSelectedReferenceWaveformId(activeToneWaveformId) === normalizeSelectedReferenceWaveformId(selectedReferenceWaveformId)
   readonly property string helperRecoveryStatusText: {
     if (!helperRecoveryPending) return ""
     return "Recovering the audio helper (attempt " + helperRecoveryAttempt + " of " + helperRecoveryMaxAttempts + "). " + helperRecoveryMessage
@@ -311,11 +340,7 @@ BarWidget {
     if (helperState === "inactive") return "Off"
     if (helperState === "starting") return "Starting"
     if (pitchActive) return inTune ? "In tune" : (detectedCents < 0 ? "Tune up" : "Tune down")
-    if (toneActive) {
-      if (activeToneSceneKind === "chord") return "Reference chord"
-      if (activeToneSceneKind === "interval") return "Drone interval"
-      return "Reference tone"
-    }
+    if (toneActive) return activeTonePlaybackTypeText
     if (metronomeActive) return "Metronome"
     if (signalState === "no_signal") return "No signal"
     return "Listening"
@@ -380,7 +405,8 @@ BarWidget {
   }
   readonly property string readoutFooterText: {
     if (pitchActive) return formatSignedCents(detectedCents) + " | " + formatFrequency(detectedFrequencyHz) + " Hz"
-    if (toneActive) return "Root " + formatFrequency(activeToneFrequencyHz) + " Hz | A4 = " + formatReferenceA(referenceAHz)
+    if (toneActive)
+      return "Root " + formatFrequency(activeToneFrequencyHz) + " Hz | " + activeToneVoicingLabel + " | " + activeToneWaveformLabel + " | A4 = " + formatReferenceA(referenceAHz)
     if (metronomeActive) return metronomeMeterLabel + " | " + metronomeSubdivisionLabel + " | " + metronomeBeatText
     if (helperRecoveryPending) return helperRecoveryStatusText
     if (helperState === "starting") return "Opening microphone and output..."
@@ -396,7 +422,7 @@ BarWidget {
     if (helperState === "inactive") return "Turn on the tuner to start capture."
     if (helperState === "starting") return "Starting audio..."
     if (pitchActive) return pitchGuidanceText
-    if (toneActive && metronomeActive) return "Reference tone and metronome active."
+    if (toneActive && metronomeActive) return "Tone and metronome active."
     if (toneActive) return activeTonePlaybackTypeText + " active."
     if (metronomeActive) return "Metronome active at " + metronomeBpm + " BPM."
     if (signalState === "no_signal") return "Play a steady note."
@@ -404,7 +430,7 @@ BarWidget {
   }
   readonly property string detailText: {
     if (toneActive)
-      return activeTonePlaybackLabel
+      return activeToneSummaryLabel
         + (metronomeActive ? (" | " + metronomeBpm + " BPM") : "")
         + (transpositionActive ? (" | " + transpositionLabelText) : "")
         + (temperamentActive ? (" | " + selectedTemperamentLabelText) : "")
@@ -844,7 +870,8 @@ BarWidget {
 
   function normalizeReferencePlaybackMode(value) {
     var text = String(value || "")
-    if (text === "drone" || text === "chord") return text
+    if (text === "drone") text = "interval"
+    if (text === "interval" || text === "chord") return text
     return "single"
   }
 
@@ -874,15 +901,31 @@ BarWidget {
 
   function exactReferencePlaybackMode(value) {
     var text = String(value || "")
-    if (text === "single" || text === "drone" || text === "chord") return text
+    if (text === "drone") return "interval"
+    if (text === "single" || text === "interval" || text === "chord") return text
     return ""
   }
 
-  function exactReferenceSceneId(value) {
+  function normalizeReferenceSceneStableId(value) {
     var text = String(value || "")
+    if (text === "blend") return "close"
+    if (text === "pedal") return "bass_octave"
+    return text
+  }
+
+  function exactReferenceSceneId(value) {
+    var text = normalizeReferenceSceneStableId(value)
     if (text === "") return ""
 
     var preset = referenceScenePresetById(text)
+    return preset && String(preset.id || "") === text ? text : ""
+  }
+
+  function exactReferenceWaveformId(value) {
+    var text = String(value || "")
+    if (text === "") return ""
+
+    var preset = referenceWaveformPresetById(text)
     return preset && String(preset.id || "") === text ? text : ""
   }
 
@@ -917,7 +960,7 @@ BarWidget {
   }
 
   function indexOfReferenceScenePreset(value) {
-    var targetId = String(value || "")
+    var targetId = normalizeReferenceSceneStableId(value)
 
     for (var index = 0; index < referenceScenePresets.length; index++)
       if (String(referenceScenePresets[index].id || "") === targetId) return index
@@ -939,6 +982,53 @@ BarWidget {
 
   function referenceScenePresetLabel(value) {
     var preset = referenceScenePresetById(value)
+    return preset ? String(preset.label || "") : ""
+  }
+
+  function referenceScenePresetEnabled(sceneId) {
+    return referenceSceneIsValid(
+      selectedReferenceMidiNumber,
+      transpositionSemitones,
+      selectedReferenceIntervalsSemitones,
+      sceneId
+    )
+  }
+
+  function referenceScenePreviewSummary(sceneId) {
+    if (!referenceScenePresetEnabled(sceneId)) return "Unavailable for current note"
+    return formatVoicePreviewSummary(
+      previewReferenceVoiceLabels(
+        selectedReferenceMidiNumber,
+        transpositionSemitones,
+        selectedReferenceIntervalsSemitones,
+        sceneId
+      )
+    )
+  }
+
+  function indexOfReferenceWaveformPreset(value) {
+    var targetId = String(value || "")
+
+    for (var index = 0; index < referenceWaveformPresets.length; index++)
+      if (String(referenceWaveformPresets[index].id || "") === targetId) return index
+
+    for (var fallbackIndex = 0; fallbackIndex < referenceWaveformPresets.length; fallbackIndex++)
+      if (String(referenceWaveformPresets[fallbackIndex].id || "") === defaultReferenceWaveformId) return fallbackIndex
+
+    return 0
+  }
+
+  function referenceWaveformPresetById(value) {
+    return referenceWaveformPresets[indexOfReferenceWaveformPreset(value)]
+  }
+
+  function normalizeSelectedReferenceWaveformId(value) {
+    var preset = referenceWaveformPresetById(value)
+    return preset ? String(preset.id || defaultReferenceWaveformId) : defaultReferenceWaveformId
+  }
+
+  function referenceWaveformPresetLabel(value) {
+    var preset = referenceWaveformPresetById(value)
     return preset ? String(preset.label || "") : ""
   }
 
@@ -985,7 +1075,7 @@ BarWidget {
 
   function referenceSelectionIntervals(playbackMode, intervalSemitones, chordId) {
     var normalizedPlaybackMode = normalizeReferencePlaybackMode(playbackMode)
-    if (normalizedPlaybackMode === "drone") return [normalizeSelectedReferenceIntervalSemitones(intervalSemitones)]
+    if (normalizedPlaybackMode === "interval") return [normalizeSelectedReferenceIntervalSemitones(intervalSemitones)]
 
     if (normalizedPlaybackMode === "chord") {
       var chordPreset = chordPresetById(chordId)
@@ -1004,7 +1094,7 @@ BarWidget {
     if (soundingRootMidiNumber < minimumReferenceMidiNumber || soundingRootMidiNumber > maximumReferenceMidiNumber) return null
 
     var generatedMidiNumbers = [soundingRootMidiNumber]
-    if (normalizedSceneId === "pedal") {
+    if (normalizedSceneId === "bass_octave") {
       var lowerRootMidiNumber = soundingRootMidiNumber - 12
       if (lowerRootMidiNumber >= minimumReferenceMidiNumber)
         generatedMidiNumbers.push(lowerRootMidiNumber)
@@ -1030,12 +1120,13 @@ BarWidget {
     return generatedReferenceVoiceMidiNumbers(displayedMidiNumber, transposition, intervals, sceneId) !== null
   }
 
-  function normalizedReferenceSelection(displayedMidiNumber, transposition, playbackMode, sceneId, intervalSemitones, chordId) {
+  function normalizedReferenceSelection(displayedMidiNumber, transposition, playbackMode, sceneId, intervalSemitones, chordId, waveformId) {
     var normalizedTransposition = normalizeTranspositionSemitones(transposition)
     var normalizedPlaybackMode = normalizeReferencePlaybackMode(playbackMode)
     var normalizedSceneId = normalizeSelectedReferenceSceneId(sceneId)
     var normalizedIntervalSemitones = normalizeSelectedReferenceIntervalSemitones(intervalSemitones)
     var normalizedChordId = normalizeSelectedReferenceChordId(chordId)
+    var normalizedWaveformId = normalizeSelectedReferenceWaveformId(waveformId)
     var normalizedMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(displayedMidiNumber, normalizedTransposition)
     var intervals = referenceSelectionIntervals(normalizedPlaybackMode, normalizedIntervalSemitones, normalizedChordId)
     var minimumMidiNumber = minimumDisplayedReferenceMidiNumberForTransposition(normalizedTransposition)
@@ -1048,16 +1139,18 @@ BarWidget {
         sceneId: normalizedSceneId,
         intervalSemitones: normalizedIntervalSemitones,
         chordId: normalizedChordId,
+        waveformId: normalizedWaveformId,
       }
     }
 
-    if (normalizedSceneId === "pedal" && referenceSceneIsValid(normalizedMidiNumber, normalizedTransposition, intervals, defaultReferenceSceneId)) {
+    if (normalizedSceneId === "bass_octave" && referenceSceneIsValid(normalizedMidiNumber, normalizedTransposition, intervals, defaultReferenceSceneId)) {
       return {
         midiNumber: normalizedMidiNumber,
         playbackMode: normalizedPlaybackMode,
         sceneId: defaultReferenceSceneId,
         intervalSemitones: normalizedIntervalSemitones,
         chordId: normalizedChordId,
+        waveformId: normalizedWaveformId,
       }
     }
 
@@ -1070,6 +1163,7 @@ BarWidget {
           sceneId: normalizedSceneId,
           intervalSemitones: normalizedIntervalSemitones,
           chordId: normalizedChordId,
+          waveformId: normalizedWaveformId,
         }
       }
 
@@ -1081,6 +1175,7 @@ BarWidget {
           sceneId: normalizedSceneId,
           intervalSemitones: normalizedIntervalSemitones,
           chordId: normalizedChordId,
+          waveformId: normalizedWaveformId,
         }
       }
     }
@@ -1095,6 +1190,7 @@ BarWidget {
             sceneId: defaultReferenceSceneId,
             intervalSemitones: normalizedIntervalSemitones,
             chordId: normalizedChordId,
+            waveformId: normalizedWaveformId,
           }
         }
 
@@ -1106,6 +1202,7 @@ BarWidget {
             sceneId: defaultReferenceSceneId,
             intervalSemitones: normalizedIntervalSemitones,
             chordId: normalizedChordId,
+            waveformId: normalizedWaveformId,
           }
         }
       }
@@ -1117,6 +1214,7 @@ BarWidget {
       sceneId: defaultReferenceSceneId,
       intervalSemitones: normalizedIntervalSemitones,
       chordId: normalizedChordId,
+      waveformId: normalizedWaveformId,
     }
   }
 
@@ -1129,7 +1227,8 @@ BarWidget {
         referencePlaybackMode,
         selectedReferenceSceneId,
         selectedReferenceIntervalSemitones,
-        selectedReferenceChordId
+        selectedReferenceChordId,
+        selectedReferenceWaveformId
       )
 
     selectedReferenceMidiNumber = normalized.midiNumber
@@ -1137,6 +1236,7 @@ BarWidget {
     selectedReferenceSceneId = normalized.sceneId
     selectedReferenceIntervalSemitones = normalized.intervalSemitones
     selectedReferenceChordId = normalized.chordId
+    selectedReferenceWaveformId = normalized.waveformId
   }
 
   function sameReferenceSelection(selection) {
@@ -1146,6 +1246,7 @@ BarWidget {
       && selection.sceneId === selectedReferenceSceneId
       && selection.intervalSemitones === selectedReferenceIntervalSemitones
       && selection.chordId === selectedReferenceChordId
+      && selection.waveformId === selectedReferenceWaveformId
   }
 
   function activeToneValidAcrossTranspositionChange(previousTransposition, nextTransposition) {
@@ -1215,7 +1316,7 @@ BarWidget {
   function playbackModeForIntervals(intervals) {
     var normalizedIntervals = normalizeProtocolIntervalArray(intervals)
     if (normalizedIntervals.length > 1) return "chord"
-    if (normalizedIntervals.length === 1) return "drone"
+    if (normalizedIntervals.length === 1) return "interval"
     return "single"
   }
 
@@ -1262,6 +1363,18 @@ BarWidget {
     return label + " | " + sceneText
   }
 
+  function formatReferenceToneSummaryLabel(sceneLabel, sceneId, waveformId) {
+    var parts = []
+    var label = String(sceneLabel || "")
+    var voicingText = referenceScenePresetLabel(sceneId)
+    var waveformText = referenceWaveformPresetLabel(waveformId)
+
+    if (label !== "") parts.push(label)
+    if (voicingText !== "") parts.push(voicingText)
+    if (waveformText !== "") parts.push(waveformText)
+    return parts.join(" | ")
+  }
+
   function formatToneVoiceSummary(voices) {
     if (!Array.isArray(voices) || voices.length === 0) return ""
 
@@ -1277,6 +1390,24 @@ BarWidget {
     }
 
     return labels.join(" + ")
+  }
+
+  function previewReferenceVoiceLabels(displayedMidiNumber, transposition, intervals, sceneId) {
+    var generatedMidiNumbers = generatedReferenceVoiceMidiNumbers(displayedMidiNumber, transposition, intervals, sceneId)
+    if (!generatedMidiNumbers) return []
+
+    var normalizedTransposition = normalizeTranspositionSemitones(transposition)
+    var labels = []
+    for (var index = 0; index < generatedMidiNumbers.length; index++)
+      labels.push(formatMidiNote(generatedMidiNumbers[index] + normalizedTransposition, noteSpelling))
+
+    return labels
+  }
+
+  function formatVoicePreviewSummary(labels) {
+    var values = Array.isArray(labels) ? labels : []
+    if (values.length === 0) return ""
+    return values.join(" + ")
   }
 
   function normalizeToneVoices(voices, fallbackNote, fallbackFrequencyHz) {
@@ -1449,6 +1580,7 @@ BarWidget {
         || "transpositionSemitones" in value
         || "playbackMode" in value
         || "sceneId" in value
+        || "waveformId" in value
         || "intervalSemitones" in value
         || "chordId" in value
         || "metronomeBpm" in value
@@ -1467,7 +1599,8 @@ BarWidget {
       value.playbackMode,
       value.sceneId,
       value.intervalSemitones,
-      value.chordId
+      value.chordId,
+      value.waveformId
     )
     var metronomeMeter = metronomeMeterPresetByValues(value.metronomeBeatsPerBar, value.metronomeBeatUnit)
 
@@ -1478,6 +1611,7 @@ BarWidget {
       transpositionSemitones: transposition,
       playbackMode: referenceSelection.playbackMode,
       sceneId: referenceSelection.sceneId,
+      waveformId: referenceSelection.waveformId,
       intervalSemitones: referenceSelection.intervalSemitones,
       chordId: referenceSelection.chordId,
       metronomeBpm: normalizeMetronomeBpm(value.metronomeBpm),
@@ -1495,6 +1629,7 @@ BarWidget {
       transpositionSemitones: transpositionSemitones,
       playbackMode: referencePlaybackMode,
       sceneId: selectedReferenceSceneId,
+      waveformId: selectedReferenceWaveformId,
       intervalSemitones: selectedReferenceIntervalSemitones,
       chordId: selectedReferenceChordId,
       metronomeBpm: metronomeBpm,
@@ -1515,6 +1650,7 @@ BarWidget {
       normalized.transpositionSemitones,
       normalized.playbackMode,
       normalized.sceneId,
+      normalized.waveformId,
       normalized.intervalSemitones,
       normalized.chordId,
       normalized.metronomeBpm,
@@ -1532,7 +1668,7 @@ BarWidget {
     if (referenceMidiNumber === null) return ""
 
     return String(shiftedMidiNumber(referenceMidiNumber, -normalized.transpositionSemitones))
-      + "|" + normalized.playbackMode + "|" + normalized.sceneId + "|" + quickSwitchSceneIntervals(normalized).join(",")
+      + "|" + normalized.playbackMode + "|" + normalized.sceneId + "|" + normalized.waveformId + "|" + quickSwitchSceneIntervals(normalized).join(",")
   }
 
   function sameQuickSwitchScene(left, right) {
@@ -1613,7 +1749,7 @@ BarWidget {
     var normalized = normalizeQuickSwitchScene(scene)
     if (!normalized) return []
 
-    if (normalized.playbackMode === "drone") return [normalized.intervalSemitones]
+    if (normalized.playbackMode === "interval") return [normalized.intervalSemitones]
 
     if (normalized.playbackMode === "chord") {
       var chordPreset = chordPresetById(normalized.chordId)
@@ -1668,6 +1804,8 @@ BarWidget {
     }
     if (normalizeStableId(normalized.temperamentId, defaultTemperamentId) !== defaultTemperamentId)
       detailParts.push(String(temperament.label || "Temperament"))
+    if (normalizeSelectedReferenceWaveformId(normalized.waveformId) !== defaultReferenceWaveformId)
+      detailParts.push(referenceWaveformPresetLabel(normalized.waveformId))
     detailParts.push("M" + normalized.metronomeBpm)
     if (meterLabel !== defaultMeterLabel || normalized.metronomeSubdivision !== defaultMetronomeSubdivision)
       detailParts.push(meterLabel)
@@ -1723,6 +1861,7 @@ BarWidget {
     selectedReferenceMidiNumber = normalizeDisplayedReferenceMidiNumberForTransposition(referenceMidiNumber === null ? 69 : referenceMidiNumber, normalized.transpositionSemitones)
     referencePlaybackMode = normalized.playbackMode
     selectedReferenceSceneId = normalized.sceneId
+    selectedReferenceWaveformId = normalized.waveformId
     selectedReferenceIntervalSemitones = normalized.intervalSemitones
     selectedReferenceChordId = normalized.chordId
     metronomeBpm = normalized.metronomeBpm
@@ -1762,7 +1901,8 @@ BarWidget {
       source.referencePlaybackMode,
       source.referenceSceneId,
       source.referenceIntervalSemitones,
-      source.referenceChordId
+      source.referenceChordId,
+      source.referenceWaveformId
     )
     var metronomePreset = metronomeMeterPresetByValues(
       source.metronomeBeatsPerBar,
@@ -1779,6 +1919,7 @@ BarWidget {
       selectedReferenceNote: formatMidiNote(referenceSelection.midiNumber, "sharps"),
       referencePlaybackMode: referenceSelection.playbackMode,
       referenceSceneId: referenceSelection.sceneId,
+      referenceWaveformId: referenceSelection.waveformId,
       referenceIntervalSemitones: referenceSelection.intervalSemitones,
       referenceChordId: referenceSelection.chordId,
       metronomeBpm: normalizeMetronomeBpm(source.metronomeBpm),
@@ -1807,6 +1948,7 @@ BarWidget {
       selectedReferenceNote: selectedReferenceCommandNoteLabel,
       referencePlaybackMode: referencePlaybackMode,
       referenceSceneId: selectedReferenceSceneId,
+      referenceWaveformId: selectedReferenceWaveformId,
       referenceIntervalSemitones: selectedReferenceIntervalSemitones,
       referenceChordId: selectedReferenceChordId,
       metronomeBpm: metronomeBpm,
@@ -1863,6 +2005,7 @@ BarWidget {
     selectedTemperamentId = settings.selectedTemperamentId
     referencePlaybackMode = settings.referencePlaybackMode
     selectedReferenceSceneId = settings.referenceSceneId
+    selectedReferenceWaveformId = settings.referenceWaveformId
     selectedReferenceIntervalSemitones = settings.referenceIntervalSemitones
     selectedReferenceChordId = settings.referenceChordId
     metronomeBpm = settings.metronomeBpm
@@ -2046,13 +2189,14 @@ BarWidget {
     var playbackModeProvided = "playback_mode" in commandObject
     var sceneIdProvided = "scene_id" in commandObject
     var chordIdProvided = "chord_id" in commandObject
+    var waveformIdProvided = "waveform_id" in commandObject
     var intervalField = parseExactIntegerField(commandObject, commandType, "interval_semitones")
     if (!intervalField.ok) return recordExternalControlFailure(sourceLabel, intervalField.message)
 
-    if (!shouldPlay && !noteField.present && !playbackModeProvided && !sceneIdProvided && !intervalField.present && !chordIdProvided) {
+    if (!shouldPlay && !noteField.present && !playbackModeProvided && !sceneIdProvided && !intervalField.present && !chordIdProvided && !waveformIdProvided) {
       return recordExternalControlFailure(
         sourceLabel,
-        "select_reference requires at least one of: note, playback_mode, scene_id, interval_semitones, chord_id"
+        "select_reference requires at least one of: note, playback_mode, scene_id, interval_semitones, chord_id, waveform_id"
       )
     }
 
@@ -2065,11 +2209,11 @@ BarWidget {
       if (nextPlaybackMode === "") {
         return recordExternalControlFailure(
           sourceLabel,
-          commandType + " field 'playback_mode' must be one of: single, drone, chord"
+          commandType + " field 'playback_mode' must be one of: single, interval, chord"
         )
       }
     } else if (chordIdProvided) nextPlaybackMode = "chord"
-    else if (intervalField.present) nextPlaybackMode = "drone"
+    else if (intervalField.present) nextPlaybackMode = "interval"
 
     if (intervalField.present && chordIdProvided) {
       return recordExternalControlFailure(
@@ -2083,8 +2227,8 @@ BarWidget {
     if (chordIdProvided && nextPlaybackMode === "single") {
       return recordExternalControlFailure(sourceLabel, "single playback does not accept chord_id")
     }
-    if (chordIdProvided && nextPlaybackMode === "drone") {
-      return recordExternalControlFailure(sourceLabel, "drone playback does not accept chord_id")
+    if (chordIdProvided && nextPlaybackMode === "interval") {
+      return recordExternalControlFailure(sourceLabel, "interval playback does not accept chord_id")
     }
     if (intervalField.present && nextPlaybackMode === "chord") {
       return recordExternalControlFailure(sourceLabel, "chord playback does not accept interval_semitones")
@@ -2097,7 +2241,17 @@ BarWidget {
 
       nextSceneId = exactReferenceSceneId(commandObject.scene_id)
       if (nextSceneId === "")
-        return recordExternalControlFailure(sourceLabel, commandType + " field 'scene_id' must be one of: blend, pedal")
+        return recordExternalControlFailure(sourceLabel, commandType + " field 'scene_id' must be one of: close, bass_octave")
+    }
+
+    var nextWaveformId = selectedReferenceWaveformId
+    if (waveformIdProvided) {
+      if (typeof commandObject.waveform_id !== "string")
+        return recordExternalControlFailure(sourceLabel, commandType + " field 'waveform_id' must be a string")
+
+      nextWaveformId = exactReferenceWaveformId(commandObject.waveform_id)
+      if (nextWaveformId === "")
+        return recordExternalControlFailure(sourceLabel, commandType + " field 'waveform_id' must be one of: sine, warm")
     }
 
     var nextIntervalSemitones = selectedReferenceIntervalSemitones
@@ -2145,13 +2299,14 @@ BarWidget {
       sceneId: nextSceneId,
       intervalSemitones: nextIntervalSemitones,
       chordId: nextChordId,
+      waveformId: nextWaveformId,
     })
 
     if (shouldPlay || toneActive) playSelectedTone()
 
-    if (shouldPlay) return recordExternalControlSuccess(sourceLabel, "Playing " + selectedReferencePlaybackLabel)
-    if (toneActive) return recordExternalControlSuccess(sourceLabel, "Retuned " + selectedReferencePlaybackLabel)
-    return recordExternalControlSuccess(sourceLabel, "Selected " + selectedReferencePlaybackLabel)
+    if (shouldPlay) return recordExternalControlSuccess(sourceLabel, "Playing " + selectedReferenceToneSummaryLabel)
+    if (toneActive) return recordExternalControlSuccess(sourceLabel, "Retuned " + selectedReferenceToneSummaryLabel)
+    return recordExternalControlSuccess(sourceLabel, "Selected " + selectedReferenceToneSummaryLabel)
   }
 
   function applyExternalPresetCommand(commandObject, sourceLabel) {
@@ -2658,7 +2813,8 @@ BarWidget {
       referencePlaybackMode,
       selectedReferenceSceneId,
       selectedReferenceIntervalSemitones,
-      selectedReferenceChordId
+      selectedReferenceChordId,
+      selectedReferenceWaveformId
     )
     var wasToneActive = toneActive
     var wasSelectedToneActive = selectedReferenceToneActive
@@ -2677,7 +2833,8 @@ BarWidget {
     var shouldReplaySelectedTone = wasSelectedToneActive && (!activeSceneValidAfterChange
       || activeDisplayedMidiNumberAfterChange !== nextReferenceSelection.midiNumber
       || !sameIntegerArray(activeIntervals, nextSelectionIntervals)
-      || normalizeSelectedReferenceSceneId(activeToneSceneId) !== nextReferenceSelection.sceneId)
+      || normalizeSelectedReferenceSceneId(activeToneSceneId) !== nextReferenceSelection.sceneId
+      || normalizeSelectedReferenceWaveformId(activeToneWaveformId) !== nextReferenceSelection.waveformId)
     var helperActive = helperWanted || helperProcessStarted || helperProc.running
 
     transpositionSemitones = next
@@ -2820,7 +2977,8 @@ BarWidget {
       value,
       selectedReferenceSceneId,
       selectedReferenceIntervalSemitones,
-      selectedReferenceChordId
+      selectedReferenceChordId,
+      selectedReferenceWaveformId
     )
     if (sameReferenceSelection(selection)) return
 
@@ -2842,13 +3000,14 @@ BarWidget {
       referencePlaybackMode,
       selectedReferenceSceneId,
       value,
-      selectedReferenceChordId
+      selectedReferenceChordId,
+      selectedReferenceWaveformId
     )
     if (sameReferenceSelection(selection)) return
 
     applyReferenceSelection(selection)
     persistWidgetSettings()
-    if (toneActive && referencePlaybackMode === "drone") playSelectedTone()
+    if (toneActive && referencePlaybackMode === "interval") playSelectedTone()
   }
 
   function changeSelectedReferenceIntervalPreset(delta) {
@@ -2869,7 +3028,8 @@ BarWidget {
       referencePlaybackMode,
       selectedReferenceSceneId,
       selectedReferenceIntervalSemitones,
-      value
+      value,
+      selectedReferenceWaveformId
     )
     if (sameReferenceSelection(selection)) return
 
@@ -2885,7 +3045,25 @@ BarWidget {
       referencePlaybackMode,
       value,
       selectedReferenceIntervalSemitones,
-      selectedReferenceChordId
+      selectedReferenceChordId,
+      selectedReferenceWaveformId
+    )
+    if (sameReferenceSelection(selection)) return
+
+    applyReferenceSelection(selection)
+    persistWidgetSettings()
+    if (toneActive) playSelectedTone()
+  }
+
+  function setSelectedReferenceWaveformId(value) {
+    var selection = normalizedReferenceSelection(
+      selectedReferenceMidiNumber,
+      transpositionSemitones,
+      referencePlaybackMode,
+      selectedReferenceSceneId,
+      selectedReferenceIntervalSemitones,
+      selectedReferenceChordId,
+      value
     )
     if (sameReferenceSelection(selection)) return
 
@@ -2953,7 +3131,8 @@ BarWidget {
       referencePlaybackMode,
       selectedReferenceSceneId,
       selectedReferenceIntervalSemitones,
-      selectedReferenceChordId
+      selectedReferenceChordId,
+      selectedReferenceWaveformId
     )
     if (sameReferenceSelection(selection)) return false
 
@@ -3007,6 +3186,7 @@ BarWidget {
     activeToneNote = ""
     activeToneFrequencyHz = 0
     activeToneSceneId = defaultReferenceSceneId
+    activeToneWaveformId = defaultReferenceWaveformId
     activeToneIntervalsSemitones = []
     activeToneVoices = []
     activeToneSyncsReferenceSelection = true
@@ -3275,6 +3455,9 @@ BarWidget {
     if (selectedReferenceSceneId !== defaultReferenceSceneId)
       command.scene_id = selectedReferenceSceneId
 
+    if (selectedReferenceWaveformId !== defaultReferenceWaveformId)
+      command.waveform_id = selectedReferenceWaveformId
+
     if (selectedReferenceIntervalsSemitones.length > 0)
       command.intervals_semitones = selectedReferenceIntervalsSemitones.slice(0)
 
@@ -3464,13 +3647,15 @@ BarWidget {
       activeToneNote = String(message.note || selectedReferenceCommandNoteLabel)
       activeToneFrequencyHz = Math.max(0, finiteNumber(message.frequency_hz, 0))
       activeToneSceneId = normalizeSelectedReferenceSceneId(message.scene_id)
+      activeToneWaveformId = normalizeSelectedReferenceWaveformId(message.waveform_id)
       activeToneIntervalsSemitones = normalizeProtocolIntervalArray(message.intervals_semitones)
       activeToneVoices = normalizeToneVoices(message.voices, activeToneNote, activeToneFrequencyHz)
       if (activeToneSyncsReferenceSelection) {
         applySelectedReferenceFromNote(activeToneNote)
         referencePlaybackMode = playbackModeForIntervals(activeToneIntervalsSemitones)
         selectedReferenceSceneId = activeToneSceneId
-        if (referencePlaybackMode === "drone")
+        selectedReferenceWaveformId = activeToneWaveformId
+        if (referencePlaybackMode === "interval")
           selectedReferenceIntervalSemitones = normalizeSelectedReferenceIntervalSemitones(activeToneIntervalsSemitones[0])
         else if (referencePlaybackMode === "chord") {
           var selectedChordPreset = chordPresetByIntervals(activeToneIntervalsSemitones)

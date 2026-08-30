@@ -14,7 +14,7 @@ not a limitation of the pitch detector.
 
 The plugin also provides reference-tone playback. A user can select a
 note and hear its exact reference pitch for tuning by ear, either alone,
-as a drone interval, or with a small fixed chord shape.
+as an interval, or with a small fixed chord shape.
 
 The current optional practice-tool slice also includes a small
 metronome with whole-number BPM, tap tempo, common meters,
@@ -61,7 +61,7 @@ subdivisions, and a beat-one accent.
 -   Real-time cents indicator
 -   Display detected note and frequency
 -   Microphone activation/deactivation
--   Single-note, drone-interval, and simple chord reference-tone
+-   Single-note, interval, and simple chord reference-tone
     playback
 -   Metronome playback with start/stop, adjustable BPM, tap tempo,
     common meters, subdivisions, beat-one accent, and compact beat
@@ -83,7 +83,8 @@ subdivisions, and a beat-one accent.
 -   Persisted reference note, metronome tempo/meter/subdivision, tuning
     preset, and sharp/flat spelling preference
 -   Persisted quick-switch favorites and recents for workflow snapshots
-    over the current preset, reference scene, and metronome setup
+    over the current preset, reference voicing, waveform, and metronome
+    setup
 -   Human-readable copy/paste import/export of the supported JSON
     configuration schema
 -   Dedicated preset-pack and temperament-pack import/export surface in

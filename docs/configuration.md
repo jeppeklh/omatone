@@ -26,7 +26,7 @@ For a bar widget instance, the entry shape is:
 ```json
 {
   "id": "jeppeklh.omatune",
-  "configVersion": 5,
+  "configVersion": 6,
   "referenceAHz": 440.0,
   "transpositionSemitones": 0,
   "noteSpelling": "sharps",
@@ -34,7 +34,8 @@ For a bar widget instance, the entry shape is:
   "selectedTemperamentId": "equal.12tet",
   "selectedReferenceNote": "A4",
   "referencePlaybackMode": "single",
-  "referenceSceneId": "blend",
+  "referenceSceneId": "close",
+  "referenceWaveformId": "warm",
   "referenceIntervalSemitones": 7,
   "referenceChordId": "major",
   "metronomeBpm": 100,
@@ -59,7 +60,7 @@ settings file.
 
 ## Supported Fields
 
--   `configVersion`: integer schema version. Current value: `5`.
+-   `configVersion`: integer schema version. Current value: `6`.
 -   `referenceAHz`: reference A frequency in Hz.
 -   `transpositionSemitones`: integer semitone offset from sounding pitch
     to displayed/selected note names.
@@ -69,7 +70,8 @@ settings file.
 -   `selectedReferenceNote`: last selected chromatic reference note.
 -   `referencePlaybackMode`: last selected reference playback mode.
 -   `referenceSceneId`: last selected bounded reference scene preset.
--   `referenceIntervalSemitones`: last selected drone interval preset.
+-   `referenceWaveformId`: last selected reference waveform.
+-   `referenceIntervalSemitones`: last selected interval preset.
 -   `referenceChordId`: last selected chord preset.
 -   `metronomeBpm`: last selected whole-number metronome tempo.
 -   `metronomeBeatsPerBar`: last selected metronome meter numerator.
@@ -131,7 +133,7 @@ Pack import and export are separate from the configuration editor.
 
 When no persisted configuration exists, Omatune uses:
 
--   `configVersion = 5`
+-   `configVersion = 6`
 -   `referenceAHz = 440.0`
 -   `transpositionSemitones = 0`
 -   `noteSpelling = "sharps"`
@@ -139,7 +141,8 @@ When no persisted configuration exists, Omatune uses:
 -   `selectedTemperamentId = "equal.12tet"`
 -   `selectedReferenceNote = "A4"`
 -   `referencePlaybackMode = "single"`
--   `referenceSceneId = "blend"`
+-   `referenceSceneId = "close"`
+-   `referenceWaveformId = "warm"`
 -   `referenceIntervalSemitones = 7`
 -   `referenceChordId = "major"`
 -   `metronomeBpm = 100`
@@ -185,16 +188,28 @@ back to the built-in default `equal.12tet`.
 `selectedReferenceNote` must parse as a supported chromatic note in the
 range `C0` through `B8` after canonicalization.
 
-`referencePlaybackMode` must be `single`, `drone`, or `chord`.
+`referencePlaybackMode` must be `single`, `interval`, or `chord`.
+
+For compatibility, imported older `drone` values normalize to
+`interval`.
 
 `referenceSceneId` must resolve to one of the built-in bounded reference
 scene presets:
 
--   `blend`
--   `pedal`
+-   `close`
+-   `bass_octave`
 
-`referenceIntervalSemitones` must resolve to one of the built-in drone
-interval presets.
+For compatibility, imported older `blend` and `pedal` values normalize
+to `close` and `bass_octave`.
+
+`referenceWaveformId` must resolve to one of the built-in waveform
+presets:
+
+-   `sine`
+-   `warm`
+
+`referenceIntervalSemitones` must resolve to one of the built-in interval
+presets.
 
 `referenceChordId` must resolve to one of the built-in chord presets.
 
@@ -233,6 +248,7 @@ Each workflow snapshot stores:
 -   `transpositionSemitones`
 -   `playbackMode`
 -   `sceneId`
+-   `waveformId`
 -   `intervalSemitones`
 -   `chordId`
 -   `metronomeBpm`
@@ -242,12 +258,13 @@ Each workflow snapshot stores:
 
 Within those snapshots:
 
--   `playbackMode` must be `single`, `drone`, or `chord`.
+-   `playbackMode` must be `single`, `interval`, or `chord`.
 -   `sceneId` must resolve to one of the built-in bounded reference scene presets.
+-   `waveformId` must resolve to one of the built-in waveform presets.
 -   `transpositionSemitones` uses the same `-12..=12` integer validation
     rule as the top-level field.
--   `intervalSemitones` must resolve to one of the built-in drone
-    interval presets.
+-   `intervalSemitones` must resolve to one of the built-in interval
+    presets.
 -   `chordId` must resolve to one of the built-in chord presets.
 -   `presetId`, `temperamentId`, `referenceNote`, and metronome fields
     use the same validation rules as their top-level equivalents.
@@ -258,8 +275,8 @@ Invalid fields fall back to the documented defaults for that field.
 If a stored reference-note scene would push an upper interval or chord
 voice outside the supported displayed note range, Omatune nudges the
 reference root to the nearest valid displayed note. If only the extra
-`pedal` support octave would overflow the displayed range, Omatune falls
-back to `blend` for that stored scene.
+`bass_octave` support octave would overflow the displayed range,
+Omatune falls back to `close` for that stored scene.
 Duplicate snapshots are removed after normalization, preserving the
 earliest surviving entry.
 
@@ -297,9 +314,9 @@ The persisted reference scene fields stay QML-owned until reference
 playback is requested:
 
 -   `selectedReferenceNote`, `referencePlaybackMode`,
-    `referenceSceneId`, `referenceIntervalSemitones`, and
-    `referenceChordId` are normalized locally and used to build the next
-    `play_tone` command;
+    `referenceSceneId`, `referenceWaveformId`,
+    `referenceIntervalSemitones`, and `referenceChordId` are normalized
+    locally and used to build the next `play_tone` command;
 -   the helper remains the single source of truth for the sounding note
     frequencies, actual rendered support voices, and any active
     temperament or calibration offsets.
@@ -357,6 +374,20 @@ Migration behavior from `configVersion = 1` is additive:
 The removed `popupLayoutMode` field from pre-`v1.5` cleanup builds is
 tolerated on load and import, ignored by the runtime UI, and omitted on
 the next save or export.
+
+### From v2.x configuration version 5
+
+Phase 3 of `v2.5` bumps the exported configuration schema to `6` to add
+bounded waveform state and normalize older tone vocabulary.
+
+Migration behavior from `configVersion = 5` is additive:
+
+-   missing `referenceWaveformId` loads as `warm`;
+-   older `referencePlaybackMode = "drone"` loads as `interval`;
+-   older `referenceSceneId = "blend"` and `"pedal"` load as `close`
+    and `bass_octave`;
+-   older quick-switch `playbackMode`, `sceneId`, and missing
+    `waveformId` fields normalize the same way.
 
 ### Future schema changes
 

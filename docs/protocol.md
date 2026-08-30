@@ -155,7 +155,7 @@ Confirms that reference-tone playback has started.
       "frequency_hz": 440.0
     }
 
-For Phase 5B/5C interval, drone, or chord playback, the same message
+For Phase 5B/5C interval or chord playback, the same message
 remains in use, with additive fields:
 
     {
@@ -170,14 +170,14 @@ remains in use, with additive fields:
     }
 
 Phase 2 richer reference scenes keep that same shape and add an optional
-bounded `scene_id` when the active scene is not the default `blend`
+bounded `scene_id` when the active scene is not the default `close`
 rendering:
 
     {
       "type": "tone_started",
       "note": "A4",
       "frequency_hz": 440.0,
-      "scene_id": "pedal",
+      "scene_id": "bass_octave",
       "intervals_semitones": [4, 7],
       "voices": [
         { "note": "A4", "frequency_hz": 440.0 },
@@ -194,7 +194,12 @@ Rules:
     is applied and `frequency_hz` remaining the actual generated
     sounding frequency;
 -   `scene_id`, when present, identifies one bounded richer rendering
-    preset; the current helper accepts `blend` and `pedal`;
+    preset; the current helper emits `close` and `bass_octave` and still
+    accepts the older `blend` and `pedal` aliases on input for
+    compatibility;
+-   `waveform_id`, when present, identifies one bounded sound-character
+    preset; the current helper emits non-default `sine` explicitly and
+    omits the default `warm` value for compactness;
 -   `intervals_semitones`, when present, echoes the extra interval notes
     above the root;
 -   `voices`, when present, lists every note actually being generated in
@@ -203,7 +208,7 @@ Rules:
     bounded support doubling such as a lower root octave that is not
     represented as another positive interval above the root;
 -   single-note playback may omit `intervals_semitones` and `voices` to
-    preserve the compact v0.1 message shape when the default `blend`
+    preserve the compact v0.1 message shape when the default `close`
     scene is active.
 
 Phase 5C simple chord presets still use this same representation. For
@@ -345,7 +350,8 @@ Phase 2 richer reference scenes also add an optional bounded `scene_id`:
     {
       "type": "play_tone",
       "note": "A4",
-      "scene_id": "pedal",
+      "scene_id": "bass_octave",
+      "waveform_id": "sine",
       "intervals_semitones": [4, 7]
     }
 
@@ -366,17 +372,24 @@ For Phase 5B/5C bounded multi-note playback:
 
 -   `intervals_semitones` is optional;
 -   `scene_id` is optional;
+-   `waveform_id` is optional;
 -   when present, `scene_id` must be one of the documented built-in
-    scene ids: `blend` or `pedal`;
+    scene ids: `close` or `bass_octave`;
+-   when present, `waveform_id` must be one of the documented built-in
+    waveform ids: `sine` or `warm`;
 -   when present, it must be an array of integers;
 -   each interval must be within `1..=24` semitones above the root;
 -   the helper currently accepts at most three interval entries, for a
     maximum of four target notes including the root; richer scenes such
-    as `pedal` may add one bounded support voice, for a maximum of five
-    simultaneously generated voices;
+    as `bass_octave` may add one bounded support voice, for a maximum of
+    five simultaneously generated voices;
 -   duplicate interval entries are rejected;
 -   every derived note must still remain inside the supported `C0`
     through `B8` range.
+
+For compatibility, `play_tone` still accepts the older `blend` and
+`pedal` scene ids on input and normalizes them to `close` and
+`bass_octave` internally.
 
 Examples:
 
@@ -387,6 +400,7 @@ Examples:
     {"type":"play_tone","note":"A4","intervals_semitones":[7]}
     {"type":"play_tone","note":"A4","intervals_semitones":[12]}
     {"type":"play_tone","note":"A4","intervals_semitones":[4,7]}
+    {"type":"play_tone","note":"A4","waveform_id":"sine"}
 
 The implementation should normalize or explicitly document accepted
 accidental notation. Internally, prefer one canonical representation.
@@ -414,7 +428,7 @@ command.
 The current QML UI uses the same command for both additive playback
 workflows:
 
--   `drone`: the selected note remains the sustained root and one
+-   `interval`: the selected note remains the sustained root and one
     configured interval note is added above it;
 -   `chord`: the selected note remains the root and one fixed preset
     shape such as major, minor, `sus2`, or `sus4` provides the upper
@@ -423,11 +437,20 @@ workflows:
 Phase 2 keeps the same target-note model and adds one bounded richer
 scene selector:
 
--   `blend`: the default scene, with gentle root weighting and a mild
-    harmonic mix so multi-note references stay clear without becoming a
-    general synth surface;
--   `pedal`: adds a quiet lower root octave when supported by the note
-    range, keeping the same target intervals and temperament math.
+-   `close`: the default voicing, keeping the root and upper target notes
+    in a compact stack;
+-   `bass_octave`: adds a quiet lower root octave when supported by the
+    note range, keeping the same target intervals and temperament math.
+
+Phase 3 adds one bounded waveform selector:
+
+-   `sine`: renders every generated voice as a pure sine tone;
+-   `warm`: adds gentle harmonic color to the anchor voice or voices
+    while keeping upper interval voices clear.
+
+The helper still accepts the older `drone`, `blend`, and `pedal` ids on
+input for compatibility, but the current UI and helper messages use
+`interval`, `close`, and `bass_octave`.
 
 ### Stop Tone
 
@@ -703,7 +726,7 @@ Valid stdout:
     {"type":"tone_started","note":"A2","frequency_hz":110.0}
     {"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A5","frequency_hz":880.0}]}
     {"type":"tone_started","note":"A4","frequency_hz":440.0,"intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}
-    {"type":"tone_started","note":"A4","frequency_hz":440.0,"scene_id":"pedal","intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A3","frequency_hz":220.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}
+    {"type":"tone_started","note":"A4","frequency_hz":440.0,"scene_id":"bass_octave","intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A3","frequency_hz":220.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}
     {"type":"tone_stopped"}
     {"type":"no_signal"}
 

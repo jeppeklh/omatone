@@ -4,7 +4,7 @@ use crate::metronome::{
     DEFAULT_METRONOME_BEAT_UNIT, DEFAULT_METRONOME_SUBDIVISION,
 };
 use crate::note::{validate_transposition_semitones, Note, Temperament};
-use crate::reference_tone::{ReferenceToneScene, ReferenceToneSceneId};
+use crate::reference_tone::{ReferenceToneScene, ReferenceToneSceneId, ReferenceToneWaveformId};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fmt;
@@ -24,7 +24,7 @@ pub enum Command {
 #[serde(rename_all = "snake_case")]
 pub enum ExternalReferencePlaybackMode {
     Single,
-    Drone,
+    Interval,
     Chord,
 }
 
@@ -32,14 +32,14 @@ impl ExternalReferencePlaybackMode {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "single" => Some(Self::Single),
-            "drone" => Some(Self::Drone),
+            "interval" | "drone" => Some(Self::Interval),
             "chord" => Some(Self::Chord),
             _ => None,
         }
     }
 
     pub fn supported_ids() -> &'static [&'static str] {
-        &["single", "drone", "chord"]
+        &["single", "interval", "chord"]
     }
 }
 
@@ -82,6 +82,8 @@ pub enum ExternalControlCommand {
         interval_semitones: Option<i32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         chord_id: Option<ExternalReferenceChordId>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        waveform_id: Option<ReferenceToneWaveformId>,
     },
     PlayReference {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +96,8 @@ pub enum ExternalControlCommand {
         interval_semitones: Option<i32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         chord_id: Option<ExternalReferenceChordId>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        waveform_id: Option<ReferenceToneWaveformId>,
     },
     StopReference,
     SelectPreset {
@@ -120,6 +124,7 @@ impl ExternalControlCommand {
             scene_id: None,
             interval_semitones: None,
             chord_id: None,
+            waveform_id: None,
         }
     }
 }
@@ -175,6 +180,8 @@ pub enum UiMessage {
         frequency_hz: f64,
         #[serde(skip_serializing_if = "ReferenceToneSceneId::is_default")]
         scene_id: ReferenceToneSceneId,
+        #[serde(skip_serializing_if = "ReferenceToneWaveformId::is_default")]
+        waveform_id: ReferenceToneWaveformId,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         intervals_semitones: Vec<i32>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -387,9 +394,15 @@ fn parse_play_tone(object: &Map<String, Value>) -> Result<Command, CommandParseE
         .parse::<Note>()
         .map_err(|error| CommandParseError::InvalidNote(error.to_string()))?;
     let scene_id = parse_scene_id(object)?;
+    let waveform_id = parse_waveform_id(object)?;
     let intervals_semitones = parse_intervals_semitones(object)?;
-    let scene = ReferenceToneScene::with_scene_id(note, intervals_semitones, scene_id)
-        .map_err(|error| CommandParseError::InvalidCommand(error.to_string()))?;
+    let scene = ReferenceToneScene::with_scene_id_and_waveform(
+        note,
+        intervals_semitones,
+        scene_id,
+        waveform_id,
+    )
+    .map_err(|error| CommandParseError::InvalidCommand(error.to_string()))?;
 
     Ok(Command::PlayTone { scene })
 }
@@ -403,6 +416,7 @@ fn parse_external_reference_command(
     let scene_id = parse_optional_external_scene_id(object, "scene_id")?;
     let interval_semitones = parse_optional_external_interval_field(object, "interval_semitones")?;
     let chord_id = parse_optional_external_chord_field(object, "chord_id")?;
+    let waveform_id = parse_optional_external_waveform_id(object, "waveform_id")?;
 
     if !play_reference
         && note.is_none()
@@ -410,9 +424,10 @@ fn parse_external_reference_command(
         && scene_id.is_none()
         && interval_semitones.is_none()
         && chord_id.is_none()
+        && waveform_id.is_none()
     {
         return Err(ExternalControlParseError::InvalidCommand(
-            "select_reference requires at least one of: note, playback_mode, scene_id, interval_semitones, chord_id"
+            "select_reference requires at least one of: note, playback_mode, scene_id, interval_semitones, chord_id, waveform_id"
                 .to_owned(),
         ));
     }
@@ -428,9 +443,9 @@ fn parse_external_reference_command(
                 "single playback does not accept chord_id".to_owned(),
             ))
         }
-        (Some(ExternalReferencePlaybackMode::Drone), _, Some(_)) => {
+        (Some(ExternalReferencePlaybackMode::Interval), _, Some(_)) => {
             return Err(ExternalControlParseError::InvalidCommand(
-                "drone playback does not accept chord_id".to_owned(),
+                "interval playback does not accept chord_id".to_owned(),
             ))
         }
         (Some(ExternalReferencePlaybackMode::Chord), Some(_), _) => {
@@ -444,7 +459,7 @@ fn parse_external_reference_command(
                     .to_owned(),
             ))
         }
-        (None, Some(_), None) => Some(ExternalReferencePlaybackMode::Drone),
+        (None, Some(_), None) => Some(ExternalReferencePlaybackMode::Interval),
         (None, None, Some(_)) => Some(ExternalReferencePlaybackMode::Chord),
         (mode, _, _) => mode,
     };
@@ -456,6 +471,7 @@ fn parse_external_reference_command(
             scene_id,
             interval_semitones,
             chord_id,
+            waveform_id,
         }
     } else {
         ExternalControlCommand::SelectReference {
@@ -464,6 +480,7 @@ fn parse_external_reference_command(
             scene_id,
             interval_semitones,
             chord_id,
+            waveform_id,
         }
     };
 
@@ -591,6 +608,28 @@ fn parse_optional_external_scene_id(
         .map(Some)
 }
 
+fn parse_optional_external_waveform_id(
+    object: &Map<String, Value>,
+    field_name: &str,
+) -> Result<Option<ReferenceToneWaveformId>, ExternalControlParseError> {
+    let Some(waveform_value) = object.get(field_name) else {
+        return Ok(None);
+    };
+
+    let waveform_id = waveform_value.as_str().ok_or_else(|| {
+        ExternalControlParseError::InvalidCommand(format!("field '{field_name}' must be a string"))
+    })?;
+
+    ReferenceToneWaveformId::parse(waveform_id)
+        .ok_or_else(|| {
+            ExternalControlParseError::InvalidCommand(format!(
+                "field '{field_name}' must be one of: {}",
+                ReferenceToneWaveformId::supported_ids().join(", ")
+            ))
+        })
+        .map(Some)
+}
+
 fn parse_optional_external_interval_field(
     object: &Map<String, Value>,
     field_name: &str,
@@ -704,6 +743,27 @@ fn parse_scene_id(object: &Map<String, Value>) -> Result<ReferenceToneSceneId, C
         CommandParseError::InvalidCommand(format!(
             "play_tone field 'scene_id' must be one of: {}",
             ReferenceToneSceneId::supported_ids().join(", ")
+        ))
+    })
+}
+
+fn parse_waveform_id(
+    object: &Map<String, Value>,
+) -> Result<ReferenceToneWaveformId, CommandParseError> {
+    let Some(waveform_value) = object.get("waveform_id") else {
+        return Ok(ReferenceToneWaveformId::default());
+    };
+
+    let waveform_id = waveform_value.as_str().ok_or_else(|| {
+        CommandParseError::InvalidCommand(
+            "play_tone field 'waveform_id' must be a string".to_owned(),
+        )
+    })?;
+
+    ReferenceToneWaveformId::parse(waveform_id).ok_or_else(|| {
+        CommandParseError::InvalidCommand(format!(
+            "play_tone field 'waveform_id' must be one of: {}",
+            ReferenceToneWaveformId::supported_ids().join(", ")
         ))
     })
 }
@@ -908,7 +968,9 @@ mod tests {
         MetronomeState, DEFAULT_METRONOME_BEATS_PER_BAR, DEFAULT_METRONOME_BEAT_UNIT,
     };
     use crate::note::Temperament;
-    use crate::reference_tone::{ReferenceToneScene, ReferenceToneSceneId};
+    use crate::reference_tone::{
+        ReferenceToneScene, ReferenceToneSceneId, ReferenceToneWaveformId,
+    };
 
     #[test]
     fn parses_play_tone_and_canonicalizes_input_note() {
@@ -937,17 +999,39 @@ mod tests {
     #[test]
     fn parses_play_tone_with_named_scene() {
         let command = parse_command(
-            r#"{"type":"play_tone","note":"A4","scene_id":"pedal","intervals_semitones":[4,7]}"#,
+            r#"{"type":"play_tone","note":"A4","scene_id":"bass_octave","waveform_id":"sine","intervals_semitones":[4,7]}"#,
         )
         .unwrap();
 
         assert_eq!(
             command,
             Command::PlayTone {
-                scene: ReferenceToneScene::with_scene_id(
+                scene: ReferenceToneScene::with_scene_id_and_waveform(
                     "A4".parse().unwrap(),
                     vec![4, 7],
                     ReferenceToneSceneId::Pedal,
+                    ReferenceToneWaveformId::Sine,
+                )
+                .unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_legacy_reference_aliases_for_compatibility() {
+        let command = parse_command(
+            r#"{"type":"play_tone","note":"A4","scene_id":"pedal","waveform_id":"warm","intervals_semitones":[12]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            command,
+            Command::PlayTone {
+                scene: ReferenceToneScene::with_scene_id_and_waveform(
+                    "A4".parse().unwrap(),
+                    vec![12],
+                    ReferenceToneSceneId::Pedal,
+                    ReferenceToneWaveformId::Warm,
                 )
                 .unwrap(),
             }
@@ -1062,7 +1146,20 @@ mod tests {
         assert_eq!(
             parse_command(r#"{"type":"play_tone","note":"A4","scene_id":"wide"}"#).unwrap_err(),
             CommandParseError::InvalidCommand(
-                "play_tone field 'scene_id' must be one of: blend, pedal".to_owned()
+                "play_tone field 'scene_id' must be one of: close, bass_octave".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"play_tone","note":"A4","waveform_id":4}"#).unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "play_tone field 'waveform_id' must be a string".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_command(r#"{"type":"play_tone","note":"A4","waveform_id":"square"}"#)
+                .unwrap_err(),
+            CommandParseError::InvalidCommand(
+                "play_tone field 'waveform_id' must be one of: sine, warm".to_owned()
             )
         );
         assert_eq!(
@@ -1182,6 +1279,7 @@ mod tests {
                 note: "A#3".parse().unwrap(),
                 frequency_hz: 233.08188,
                 scene_id: ReferenceToneSceneId::Blend,
+                waveform_id: ReferenceToneWaveformId::Warm,
                 intervals_semitones: Vec::new(),
                 voices: Vec::new(),
             }
@@ -1191,9 +1289,23 @@ mod tests {
         );
         assert_eq!(
             UiMessage::ToneStarted {
+                note: "A#3".parse().unwrap(),
+                frequency_hz: 233.08188,
+                scene_id: ReferenceToneSceneId::Blend,
+                waveform_id: ReferenceToneWaveformId::Sine,
+                intervals_semitones: Vec::new(),
+                voices: Vec::new(),
+            }
+            .to_json_line()
+            .unwrap(),
+            r#"{"type":"tone_started","note":"A#3","frequency_hz":233.08188,"waveform_id":"sine"}"#
+        );
+        assert_eq!(
+            UiMessage::ToneStarted {
                 note: "A4".parse().unwrap(),
                 frequency_hz: 440.0,
                 scene_id: ReferenceToneSceneId::Blend,
+                waveform_id: ReferenceToneWaveformId::Warm,
                 intervals_semitones: vec![12],
                 voices: vec![
                     ToneVoice {
@@ -1215,6 +1327,7 @@ mod tests {
                 note: "A4".parse().unwrap(),
                 frequency_hz: 440.0,
                 scene_id: ReferenceToneSceneId::Pedal,
+                waveform_id: ReferenceToneWaveformId::Warm,
                 intervals_semitones: vec![4, 7],
                 voices: vec![
                     ToneVoice {
@@ -1237,7 +1350,7 @@ mod tests {
             }
             .to_json_line()
             .unwrap(),
-            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"scene_id":"pedal","intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A3","frequency_hz":220.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}"#
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"scene_id":"bass_octave","intervals_semitones":[4,7],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A3","frequency_hz":220.0},{"note":"C#5","frequency_hz":554.3652619537442},{"note":"E5","frequency_hz":659.2551138257398}]}"#
         );
         assert_eq!(
             UiMessage::MetronomeStarted {
@@ -1321,15 +1434,16 @@ mod tests {
             .unwrap(),
             ExternalControlCommand::SelectReference {
                 note: Some("A#3".parse().unwrap()),
-                playback_mode: Some(ExternalReferencePlaybackMode::Drone),
+                playback_mode: Some(ExternalReferencePlaybackMode::Interval),
                 scene_id: None,
                 interval_semitones: Some(12),
                 chord_id: None,
+                waveform_id: None,
             }
         );
         assert_eq!(
             parse_external_control_command(
-                r#"{"type":"play_reference","playback_mode":"chord","chord_id":"sus4","scene_id":"pedal"}"#
+                r#"{"type":"play_reference","playback_mode":"chord","chord_id":"sus4","scene_id":"bass_octave","waveform_id":"sine"}"#
             )
             .unwrap(),
             ExternalControlCommand::PlayReference {
@@ -1338,6 +1452,7 @@ mod tests {
                 scene_id: Some(ReferenceToneSceneId::Pedal),
                 interval_semitones: None,
                 chord_id: Some(ExternalReferenceChordId::Sus4),
+                waveform_id: Some(ReferenceToneWaveformId::Sine),
             }
         );
         assert_eq!(
@@ -1348,6 +1463,21 @@ mod tests {
                 scene_id: None,
                 interval_semitones: None,
                 chord_id: None,
+                waveform_id: None,
+            }
+        );
+        assert_eq!(
+            parse_external_control_command(
+                r#"{"type":"play_reference","playback_mode":"drone","scene_id":"pedal"}"#
+            )
+            .unwrap(),
+            ExternalControlCommand::PlayReference {
+                note: None,
+                playback_mode: Some(ExternalReferencePlaybackMode::Interval),
+                scene_id: Some(ReferenceToneSceneId::Pedal),
+                interval_semitones: None,
+                chord_id: None,
+                waveform_id: None,
             }
         );
     }
@@ -1390,7 +1520,7 @@ mod tests {
         assert_eq!(
             parse_external_control_command(r#"{"type":"select_reference"}"#).unwrap_err(),
             ExternalControlParseError::InvalidCommand(
-                "select_reference requires at least one of: note, playback_mode, scene_id, interval_semitones, chord_id"
+                "select_reference requires at least one of: note, playback_mode, scene_id, interval_semitones, chord_id, waveform_id"
                     .to_owned()
             )
         );
@@ -1407,7 +1537,7 @@ mod tests {
             parse_external_control_command(r#"{"type":"select_reference","scene_id":"wide"}"#)
                 .unwrap_err(),
             ExternalControlParseError::InvalidScene(
-                "field 'scene_id' must be one of: blend, pedal".to_owned()
+                "field 'scene_id' must be one of: close, bass_octave".to_owned()
             )
         );
         assert_eq!(
@@ -1415,6 +1545,13 @@ mod tests {
                 .unwrap_err(),
             ExternalControlParseError::InvalidInterval(
                 "field 'interval_semitones' must be one of: 3, 4, 5, 7, 12".to_owned()
+            )
+        );
+        assert_eq!(
+            parse_external_control_command(r#"{"type":"select_reference","waveform_id":"square"}"#)
+                .unwrap_err(),
+            ExternalControlParseError::InvalidCommand(
+                "field 'waveform_id' must be one of: sine, warm".to_owned()
             )
         );
         assert_eq!(
@@ -1441,9 +1578,10 @@ mod tests {
                 scene_id: Some(ReferenceToneSceneId::Pedal),
                 interval_semitones: None,
                 chord_id: Some(ExternalReferenceChordId::Major),
+                waveform_id: Some(ReferenceToneWaveformId::Sine),
             })
             .unwrap(),
-            r#"{"type":"play_reference","note":"A4","playback_mode":"chord","scene_id":"pedal","chord_id":"major"}"#
+            r#"{"type":"play_reference","note":"A4","playback_mode":"chord","scene_id":"bass_octave","chord_id":"major","waveform_id":"sine"}"#
         );
         assert_eq!(
             serde_json::to_string(&ExternalControlCommand::StartMetronome {

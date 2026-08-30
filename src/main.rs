@@ -132,6 +132,7 @@ fn handle_command(
                 note: active_tone.note,
                 frequency_hz: active_tone.frequency_hz,
                 scene_id: active_tone.scene_id,
+                waveform_id: active_tone.waveform_id,
                 intervals_semitones: active_tone.intervals_semitones,
                 voices: active_tone.voices,
             })?,
@@ -154,6 +155,7 @@ fn handle_command(
                         note: active_tone.note,
                         frequency_hz: active_tone.frequency_hz,
                         scene_id: active_tone.scene_id,
+                        waveform_id: active_tone.waveform_id,
                         intervals_semitones: active_tone.intervals_semitones,
                         voices: active_tone.voices,
                     })?
@@ -193,6 +195,7 @@ fn handle_command(
                     note: active_tone.note,
                     frequency_hz: active_tone.frequency_hz,
                     scene_id: active_tone.scene_id,
+                    waveform_id: active_tone.waveform_id,
                     intervals_semitones: active_tone.intervals_semitones,
                     voices: active_tone.voices,
                 })?
@@ -207,6 +210,7 @@ fn handle_command(
                         note: active_tone.note,
                         frequency_hz: active_tone.frequency_hz,
                         scene_id: active_tone.scene_id,
+                        waveform_id: active_tone.waveform_id,
                         intervals_semitones: active_tone.intervals_semitones,
                         voices: active_tone.voices,
                     })?

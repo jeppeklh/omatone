@@ -5,7 +5,8 @@ use crate::protocol::{ErrorCode, ToneVoice, UiMessage};
 use crate::protocol_io::ProtocolWriter;
 use crate::reference_tone::{
     ReferenceToneScene, ReferenceToneSceneError, ReferenceToneSceneId, ReferenceToneVoice,
-    ToneGeneratorError, DEFAULT_OUTPUT_LEVEL, DEFAULT_RAMP_DURATION_MS, DEFAULT_SAMPLE_RATE_HZ,
+    ReferenceToneWaveformId, ToneGeneratorError, DEFAULT_OUTPUT_LEVEL, DEFAULT_RAMP_DURATION_MS,
+    DEFAULT_SAMPLE_RATE_HZ,
 };
 use crate::shared_audio::SharedAudioMixer;
 use libpulse_binding as pulse;
@@ -80,6 +81,7 @@ pub struct ActiveTone {
     pub note: Note,
     pub frequency_hz: f64,
     pub scene_id: ReferenceToneSceneId,
+    pub waveform_id: ReferenceToneWaveformId,
     pub intervals_semitones: Vec<i32>,
     pub voices: Vec<ToneVoice>,
     generator_voices: Vec<ReferenceToneVoice>,
@@ -775,6 +777,7 @@ fn build_active_tone(
         note: root_voice.note,
         frequency_hz: root_voice.frequency_hz,
         scene_id: scene.scene_id(),
+        waveform_id: scene.waveform_id(),
         intervals_semitones: scene.intervals_semitones().to_vec(),
         voices: protocol_voices,
         generator_voices,
@@ -789,10 +792,11 @@ fn resolve_sounding_scene(
         .sounding_note_for_displayed_note(displayed_scene.root_note())
         .map_err(|error| map_tone_math_error(error, displayed_scene.root_note(), tuning_model))?;
 
-    ReferenceToneScene::with_scene_id(
+    ReferenceToneScene::with_scene_id_and_waveform(
         sounding_root_note,
         displayed_scene.intervals_semitones().to_vec(),
         displayed_scene.scene_id(),
+        displayed_scene.waveform_id(),
     )
     .map_err(|error| map_scene_resolution_error(error, displayed_scene.root_note(), tuning_model))
 }

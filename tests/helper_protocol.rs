@@ -1,6 +1,6 @@
 use omatune::note::{Note, Temperament, DEFAULT_REFERENCE_A_HZ};
 use omatune::protocol::{PitchAnalysis, UiMessage};
-use omatune::reference_tone::ReferenceToneSceneId;
+use omatune::reference_tone::{ReferenceToneSceneId, ReferenceToneWaveformId};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
@@ -453,6 +453,27 @@ fn chord_playback_reports_root_and_all_generated_voices() {
 }
 
 #[test]
+fn sine_waveform_playback_is_reported_explicitly() {
+    let output = run_helper_with_input(
+        "{\"type\":\"play_tone\",\"note\":\"A4\",\"waveform_id\":\"sine\"}\n",
+        Some("idle"),
+        Some("ok"),
+        &[],
+    );
+    let lines = stdout_lines(&output);
+
+    assert!(output.status.success());
+    assert_eq!(
+        lines,
+        vec![
+            r#"{"type":"ready"}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"waveform_id":"sine"}"#
+                .to_owned(),
+        ]
+    );
+}
+
+#[test]
 fn pedal_scene_respects_temperament_and_reports_support_voices() {
     let temperament = Temperament::from_offset_slice(&[
         0.0, 8.0, 0.0, 0.0, -6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
@@ -468,6 +489,7 @@ fn pedal_scene_respects_temperament_and_reports_support_voices() {
             .frequency_hz_for_note(a4, DEFAULT_REFERENCE_A_HZ)
             .unwrap(),
         scene_id: ReferenceToneSceneId::Pedal,
+        waveform_id: ReferenceToneWaveformId::Warm,
         intervals_semitones: vec![4, 7],
         voices: vec![
             omatune::protocol::ToneVoice {
@@ -519,6 +541,7 @@ fn single_note_pedal_scene_reports_scene_id_and_support_voice() {
         note: a4,
         frequency_hz: a4.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
         scene_id: ReferenceToneSceneId::Pedal,
+        waveform_id: ReferenceToneWaveformId::Warm,
         intervals_semitones: Vec::new(),
         voices: vec![
             omatune::protocol::ToneVoice {
@@ -561,7 +584,7 @@ fn pedal_scene_supports_the_maximum_voice_count() {
         lines,
         vec![
             r#"{"type":"ready"}"#.to_owned(),
-            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"scene_id":"pedal","intervals_semitones":[3,7,12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A3","frequency_hz":220.0},{"note":"C5","frequency_hz":523.2511306011972},{"note":"E5","frequency_hz":659.2551138257398},{"note":"A5","frequency_hz":880.0}]}"#.to_owned(),
+            r#"{"type":"tone_started","note":"A4","frequency_hz":440.0,"scene_id":"bass_octave","intervals_semitones":[3,7,12],"voices":[{"note":"A4","frequency_hz":440.0},{"note":"A3","frequency_hz":220.0},{"note":"C5","frequency_hz":523.2511306011972},{"note":"E5","frequency_hz":659.2551138257398},{"note":"A5","frequency_hz":880.0}]}"#.to_owned(),
         ]
     );
 }
@@ -769,6 +792,7 @@ fn invalid_runtime_transposition_does_not_commit_or_drop_an_active_pedal_scene()
         note: c1,
         frequency_hz: c1.frequency_hz(DEFAULT_REFERENCE_A_HZ).unwrap(),
         scene_id: ReferenceToneSceneId::Pedal,
+        waveform_id: ReferenceToneWaveformId::Warm,
         intervals_semitones: Vec::new(),
         voices: vec![
             omatune::protocol::ToneVoice {
@@ -787,6 +811,7 @@ fn invalid_runtime_transposition_does_not_commit_or_drop_an_active_pedal_scene()
         note: c1,
         frequency_hz: c1.frequency_hz(442.0).unwrap(),
         scene_id: ReferenceToneSceneId::Pedal,
+        waveform_id: ReferenceToneWaveformId::Warm,
         intervals_semitones: Vec::new(),
         voices: vec![
             omatune::protocol::ToneVoice {
@@ -849,6 +874,7 @@ fn startup_temperament_argument_calibrates_initial_pitch_and_tone() {
         note: c4,
         frequency_hz: c4_frequency_hz,
         scene_id: ReferenceToneSceneId::Blend,
+        waveform_id: ReferenceToneWaveformId::Warm,
         intervals_semitones: Vec::new(),
         voices: Vec::new(),
     }
@@ -900,6 +926,7 @@ fn runtime_temperament_update_restarts_active_tone_with_tempered_frequency() {
                 note: c4,
                 frequency_hz: equal_c4_frequency_hz,
                 scene_id: ReferenceToneSceneId::Blend,
+                waveform_id: ReferenceToneWaveformId::Warm,
                 intervals_semitones: Vec::new(),
                 voices: Vec::new(),
             }
@@ -909,6 +936,7 @@ fn runtime_temperament_update_restarts_active_tone_with_tempered_frequency() {
                 note: c4,
                 frequency_hz: tempered_c4_frequency_hz,
                 scene_id: ReferenceToneSceneId::Blend,
+                waveform_id: ReferenceToneWaveformId::Warm,
                 intervals_semitones: Vec::new(),
                 voices: Vec::new(),
             }

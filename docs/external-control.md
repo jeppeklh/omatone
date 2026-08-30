@@ -57,8 +57,8 @@ Examples:
 ```json
 {"type":"select_reference","note":"A4"}
 {"type":"play_reference","note":"A4"}
-{"type":"play_reference","note":"D3","playback_mode":"drone","interval_semitones":7}
-{"type":"play_reference","playback_mode":"chord","chord_id":"minor","scene_id":"pedal"}
+{"type":"play_reference","note":"D3","playback_mode":"interval","interval_semitones":7}
+{"type":"play_reference","playback_mode":"chord","chord_id":"minor","scene_id":"bass_octave","waveform_id":"sine"}
 {"type":"stop_reference"}
 ```
 
@@ -70,21 +70,26 @@ Rules:
     external callers stay stable even when the UI is in `Bb`, `F`, or
     another transposed display mode;
 -   omitted reference-shape fields preserve the current live selection;
--   `playback_mode`, when present, must be `single`, `drone`, or
+-   `playback_mode`, when present, must be `single`, `interval`, or
     `chord`;
--   `scene_id`, when present, must be `blend` or `pedal`;
--   `interval_semitones`, when present, must be one of the shipped drone
+-   `scene_id`, when present, must be `close` or `bass_octave`;
+-   `waveform_id`, when present, must be `sine` or `warm`;
+-   `interval_semitones`, when present, must be one of the shipped interval
     presets: `3`, `4`, `5`, `7`, or `12`;
 -   `chord_id`, when present, must be one of the shipped chord presets:
     `major`, `minor`, `sus2`, or `sus4`;
 -   `single` playback does not accept `interval_semitones` or
     `chord_id`;
--   `drone` playback does not accept `chord_id`;
+-   `interval` playback does not accept `chord_id`;
 -   `chord` playback does not accept `interval_semitones`;
 -   `select_reference` retunes the active reference immediately when a
     tone is already playing;
 -   reference commands reject scenes that would fall outside Omatune's
     supported displayed note range under the current transposition.
+
+For compatibility, Omatune still accepts the older `drone`, `blend`,
+and `pedal` ids on input and normalizes them to `interval`, `close`,
+and `bass_octave` in the live UI state.
 
 ### Preset Selection
 
